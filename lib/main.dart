@@ -265,69 +265,84 @@ class _MonthCard extends StatelessWidget {
       ..addAll(List<int?>.generate(daysInMonth, (index) => index + 1))
       ..addAll(List<int?>.filled(trailingEmptySlots, null));
 
-    return Card(
+    return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${_monthNames[month - 1]} $year',
-              style: Theme.of(context).textTheme.titleLarge,
+      padding: const EdgeInsets.all(16),
+      color: Colors.transparent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${_monthNames[month - 1]} $year',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 16),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _weekdayLabels.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 7,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+              childAspectRatio: 1.5,
             ),
-            const SizedBox(height: 16),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: _weekdayLabels.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 7,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-                childAspectRatio: 1.5,
-              ),
-              itemBuilder: (context, index) {
-                return Center(
-                  child: Text(
-                    _weekdayLabels[index],
-                    style: Theme.of(
-                      context,
-                    ).textTheme.labelMedium?.copyWith(color: Colors.white70),
-                  ),
-                );
-              },
+            itemBuilder: (context, index) {
+              return Center(
+                child: Text(
+                  _weekdayLabels[index],
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelMedium?.copyWith(color: Colors.white70),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 8),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: cells.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 7,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+              childAspectRatio: 1.05,
             ),
-            const SizedBox(height: 8),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: cells.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 7,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-                childAspectRatio: 1.05,
-              ),
-              itemBuilder: (context, index) {
-                final day = cells[index];
-                final isToday =
-                    day != null &&
-                    today.year == year &&
-                    today.month == month &&
-                    today.day == day;
+            itemBuilder: (context, index) {
+              final day = cells[index];
+              final cellDate = day == null ? null : DateTime(year, month, day);
+              final todayDate = DateTime(today.year, today.month, today.day);
+              final isToday =
+                  day != null &&
+                  today.year == year &&
+                  today.month == month &&
+                  today.day == day;
+              final isPastDay =
+                  cellDate != null && cellDate.isBefore(todayDate) && !isToday;
 
-                return DecoratedBox(
+              return Center(
+                child: Container(
+                  width: 38,
+                  height: 38,
                   decoration: BoxDecoration(
-                    color: isToday
-                        ? const Color(0xFF00FF38).withValues(alpha: 0.18)
-                        : const Color(0xFF111111),
+                    shape: BoxShape.circle,
+                    color: day == null
+                        ? Colors.transparent
+                        : isToday
+                        ? const Color(0xFF00FF38).withValues(alpha: 0.2)
+                        : isPastDay
+                        ? const Color(0xFFFF3B30).withValues(alpha: 0.2)
+                        : const Color(0xFF111111).withValues(alpha: 0.45),
                     border: Border.all(
-                      color: isToday
+                      color: day == null
+                          ? Colors.transparent
+                          : isToday
                           ? const Color(0xFF00FF38)
+                          : isPastDay
+                          ? const Color(0xFFFF3B30)
                           : const Color(0xFF2E2E2E),
                     ),
-                    borderRadius: BorderRadius.circular(8),
                   ),
                   child: Center(
                     child: Text(
@@ -338,11 +353,11 @@ class _MonthCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                );
-              },
-            ),
-          ],
-        ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
