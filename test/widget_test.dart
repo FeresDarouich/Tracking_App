@@ -4,14 +4,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:trackingapp/main.dart';
 
 void main() {
-  testWidgets('animates year completion bar to the exact value', (
+  testWidgets('shows progress tab by default and animates year completion', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(home: YearProgressPage(today: DateTime(2026, 7, 2, 12))),
+      MaterialApp(home: AppShell(today: DateTime(2026, 7, 2, 12))),
     );
 
     expect(find.text('Year Completion'), findsOneWidget);
+    expect(find.text('Progress'), findsOneWidget);
+    expect(find.text('Calendar'), findsOneWidget);
     expect(find.byKey(const Key('year-progress-bar')), findsOneWidget);
     expect(find.byKey(const Key('year-progress-label')), findsOneWidget);
     expect(find.text('0.0%'), findsOneWidget);
@@ -51,5 +53,23 @@ void main() {
     );
     expect(animatedBar.value, 0.5);
     expect(find.text('50.0%'), findsOneWidget);
+  });
+
+  testWidgets('switches to a scrollable year calendar page', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: AppShell(today: DateTime(2026, 7, 2, 12))),
+    );
+
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Year Calendar'), findsOneWidget);
+    expect(find.byKey(const Key('year-calendar-list')), findsOneWidget);
+    expect(
+      tester.widget<ListView>(find.byKey(const Key('year-calendar-list'))),
+      isNotNull,
+    );
   });
 }
