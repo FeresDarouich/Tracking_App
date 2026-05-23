@@ -73,7 +73,7 @@ void main() {
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(home: AppShell(today: DateTime(2026, 7, 2, 12))),
+      MaterialApp(home: AppShell(today: DateTime(2026, 10, 2, 12))),
     );
 
     await tester.tap(find.text('Calendar'));
@@ -81,8 +81,11 @@ void main() {
 
     expect(find.text('Year Calendar'), findsOneWidget);
     expect(find.byKey(const Key('year-calendar-list')), findsOneWidget);
+    expect(find.text('October 2026'), findsOneWidget);
     expect(
-      tester.widget<ListView>(find.byKey(const Key('year-calendar-list'))),
+      tester.widget<SingleChildScrollView>(
+        find.byKey(const Key('year-calendar-list')),
+      ),
       isNotNull,
     );
   });
@@ -105,7 +108,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 2400));
 
     expect(find.text('50.0%'), findsOneWidget);
-    expect(find.text('Cycle: July 1, 2026 to July 1, 2027'), findsOneWidget);
+    expect(find.text('Cycle: July 1, 2026 to July 1, 2027'), findsNothing);
 
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();

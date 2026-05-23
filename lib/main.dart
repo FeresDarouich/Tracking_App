@@ -102,6 +102,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
   int _progressPageVersion = 0;
+  int _calendarPageVersion = 0;
   late YearCycleSettings _settings;
 
   @override
@@ -145,7 +146,11 @@ class _AppShellState extends State<AppShell> {
         settings: _settings,
         cycle: cycle,
       ),
-      YearCalendarPage(today: today, cycle: cycle),
+      YearCalendarPage(
+        key: ValueKey(_calendarPageVersion),
+        today: today,
+        cycle: cycle,
+      ),
       SettingsPage(
         today: today,
         settings: _settings,
@@ -164,6 +169,9 @@ class _AppShellState extends State<AppShell> {
           setState(() {
             if (index == 0) {
               _progressPageVersion++;
+            }
+            if (index == 1) {
+              _calendarPageVersion++;
             }
             _selectedIndex = index;
           });
@@ -255,8 +263,6 @@ class _YearProgressPageState extends State<YearProgressPage>
     final title = widget.settings.mode == YearStartMode.normal
         ? 'How far through ${widget.cycle.start.year}?'
         : 'How far through your custom year?';
-    final cycleLabel =
-        'Cycle: ${_formatDate(widget.cycle.start)} to ${_formatDate(widget.cycle.displayEnd)}';
     final statusLabel = now.isBefore(widget.cycle.start)
         ? 'This cycle has not started yet.'
         : now.isBefore(widget.cycle.endExclusive)
@@ -287,13 +293,8 @@ class _YearProgressPageState extends State<YearProgressPage>
                   Text(title, style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: 12),
                   Text(
-                    cycleLabel,
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
                     statusLabel,
-                    style: Theme.of(context).textTheme.bodyMedium,
+                    style: Theme.of(context).textTheme.bodyLarge,
                   ),
                   const SizedBox(height: 24),
                   AnimatedBuilder(
@@ -346,30 +347,78 @@ class _YearProgressPageState extends State<YearProgressPage>
   }
 }
 
-class YearCalendarPage extends StatelessWidget {
+class YearCalendarPage extends StatefulWidget {
   const YearCalendarPage({super.key, required this.today, required this.cycle});
 
   final DateTime today;
   final YearCycleRange cycle;
 
   @override
-  Widget build(BuildContext context) {
-    final months = _monthsInRange(cycle);
+  State<YearCalendarPage> createState() => _YearCalendarPageState();
+}
 
-    return ListView.builder(
+class _YearCalendarPageState extends State<YearCalendarPage> {
+  late final ScrollController _scrollController;
+  late final List<DateTime> _months;
+  late final List<GlobalKey> _monthKeys;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+    _months = _monthsInRange(widget.cycle);
+    _monthKeys = List<GlobalKey>.generate(_months.length, (_) => GlobalKey());
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _months.isEmpty) {
+        return;
+      }
+
+      final targetIndex = _targetMonthIndex(
+        _months,
+        widget.today,
+        widget.cycle,
+      );
+      final targetContext = _monthKeys[targetIndex].currentContext;
+
+      if (targetContext != null) {
+        Scrollable.ensureVisible(
+          targetContext,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      controller: _scrollController,
       key: const Key('year-calendar-list'),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-      itemCount: months.length,
-      itemBuilder: (context, index) {
-        final monthDate = months[index];
+      child: Column(
+        children: List<Widget>.generate(_months.length, (index) {
+          final monthDate = _months[index];
 
-        return _MonthCard(
-          month: monthDate.month,
-          year: monthDate.year,
-          today: today,
-          cycle: cycle,
-        );
-      },
+          return KeyedSubtree(
+            key: _monthKeys[index],
+            child: _MonthCard(
+              month: monthDate.month,
+              year: monthDate.year,
+              today: widget.today,
+              cycle: widget.cycle,
+            ),
+          );
+        }),
+      ),
     );
   }
 }
@@ -668,6 +717,28 @@ List<DateTime> _monthsInRange(YearCycleRange cycle) {
   }
 
   return months;
+}
+
+int _targetMonthIndex(
+  List<DateTime> months,
+  DateTime today,
+  YearCycleRange cycle,
+) {
+  final targetMonth = DateTime(today.year, today.month);
+  final exactIndex = months.indexWhere(
+    (month) =>
+        month.year == targetMonth.year && month.month == targetMonth.month,
+  );
+
+  if (exactIndex != -1) {
+    return exactIndex;
+  }
+
+  if (_dateOnly(today).isBefore(cycle.start)) {
+    return 0;
+  }
+
+  return months.length - 1;
 }
 
 DateTime _dateOnly(DateTime date) {
