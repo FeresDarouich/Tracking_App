@@ -13,10 +13,15 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = ThemeData(
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF1E88E5),
-        brightness: Brightness.light,
+        seedColor: const Color(0xFF00FF38),
+        brightness: Brightness.dark,
       ),
-      scaffoldBackgroundColor: const Color(0xFFF6F8FB),
+      scaffoldBackgroundColor: const Color(0xFF000000),
+      cardColor: const Color(0xFF050505),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFF000000),
+        foregroundColor: Colors.white,
+      ),
       useMaterial3: true,
     );
 
@@ -124,14 +129,13 @@ class _YearProgressPageState extends State<YearProgressPage>
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(999),
-                              child: LinearProgressIndicator(
-                                key: const Key('year-progress-bar'),
-                                value: animatedProgress,
-                                minHeight: 24,
-                                backgroundColor: const Color(0xFFDCE7F3),
-                              ),
+                            LinearProgressIndicator(
+                              key: const Key('year-progress-bar'),
+                              value: animatedProgress,
+                              minHeight: 24,
+                              color: const Color(0xFF00FF38),
+                              backgroundColor: const Color(0xFF4A4A4A),
+                              borderRadius: BorderRadius.zero,
                             ),
                             const SizedBox(height: 16),
                             Text(
