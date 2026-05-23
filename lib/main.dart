@@ -23,6 +23,39 @@ const _monthNames = <String>[
 
 const _weekdayLabels = <String>['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 
+enum YearStartMode { normal, custom }
+
+class YearCycleSettings {
+  const YearCycleSettings._({required this.mode, this.customStart});
+
+  const YearCycleSettings.normal() : this._(mode: YearStartMode.normal);
+
+  const YearCycleSettings.custom({required DateTime customStart})
+    : this._(mode: YearStartMode.custom, customStart: customStart);
+
+  final YearStartMode mode;
+  final DateTime? customStart;
+
+  YearCycleSettings copyWith({YearStartMode? mode, DateTime? customStart}) {
+    return YearCycleSettings._(
+      mode: mode ?? this.mode,
+      customStart: customStart ?? this.customStart,
+    );
+  }
+}
+
+class YearCycleRange {
+  const YearCycleRange({
+    required this.start,
+    required this.endExclusive,
+    required this.displayEnd,
+  });
+
+  final DateTime start;
+  final DateTime endExclusive;
+  final DateTime displayEnd;
+}
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -44,6 +77,7 @@ class MyApp extends StatelessWidget {
 
     return MaterialApp(
       title: 'Year Progress',
+      debugShowCheckedModeBanner: false,
       theme: theme,
       home: const AppShell(),
     );
@@ -51,9 +85,15 @@ class MyApp extends StatelessWidget {
 }
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, DateTime? today}) : _today = today;
+  const AppShell({
+    super.key,
+    DateTime? today,
+    YearCycleSettings? initialSettings,
+  }) : _today = today,
+       _initialSettings = initialSettings;
 
   final DateTime? _today;
+  final YearCycleSettings? _initialSettings;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -61,15 +101,59 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
+  int _progressPageVersion = 0;
+  late YearCycleSettings _settings;
+
+  @override
+  void initState() {
+    super.initState();
+    _settings = widget._initialSettings ?? const YearCycleSettings.normal();
+  }
+
+  void _updateYearStartMode(YearStartMode mode) {
+    final today = _dateOnly(widget._today ?? DateTime.now());
+
+    setState(() {
+      _settings = _settings.copyWith(
+        mode: mode,
+        customStart: mode == YearStartMode.custom
+            ? _dateOnly(_settings.customStart ?? today)
+            : _settings.customStart,
+      );
+      _progressPageVersion++;
+    });
+  }
+
+  void _updateCustomStart(DateTime customStart) {
+    setState(() {
+      _settings = _settings.copyWith(
+        mode: YearStartMode.custom,
+        customStart: _dateOnly(customStart),
+      );
+      _progressPageVersion++;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final today = widget._today ?? DateTime.now();
+    final cycle = _resolveYearCycle(today, _settings);
     final pages = [
-      YearProgressPage(today: today),
-      YearCalendarPage(year: today.year, today: today),
+      YearProgressPage(
+        key: ValueKey(_progressPageVersion),
+        today: today,
+        settings: _settings,
+        cycle: cycle,
+      ),
+      YearCalendarPage(today: today, cycle: cycle),
+      SettingsPage(
+        today: today,
+        settings: _settings,
+        onModeChanged: _updateYearStartMode,
+        onCustomStartChanged: _updateCustomStart,
+      ),
     ];
-    final titles = ['Year Completion', 'Year Calendar'];
+    final titles = ['Year Completion', 'Year Calendar', 'Settings'];
 
     return Scaffold(
       appBar: AppBar(title: Text(titles[_selectedIndex])),
@@ -78,6 +162,9 @@ class _AppShellState extends State<AppShell> {
         selectedIndex: _selectedIndex,
         onDestinationSelected: (index) {
           setState(() {
+            if (index == 0) {
+              _progressPageVersion++;
+            }
             _selectedIndex = index;
           });
         },
@@ -92,6 +179,11 @@ class _AppShellState extends State<AppShell> {
             selectedIcon: Icon(Icons.calendar_month),
             label: 'Calendar',
           ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Settings',
+          ),
         ],
       ),
     );
@@ -99,9 +191,16 @@ class _AppShellState extends State<AppShell> {
 }
 
 class YearProgressPage extends StatefulWidget {
-  const YearProgressPage({super.key, DateTime? today}) : _today = today;
+  const YearProgressPage({
+    super.key,
+    DateTime? today,
+    required this.settings,
+    required this.cycle,
+  }) : _today = today;
 
   final DateTime? _today;
+  final YearCycleSettings settings;
+  final YearCycleRange cycle;
 
   @override
   State<YearProgressPage> createState() => _YearProgressPageState();
@@ -147,9 +246,27 @@ class _YearProgressPageState extends State<YearProgressPage>
   @override
   Widget build(BuildContext context) {
     final now = widget._today ?? DateTime.now();
-    final progress = _yearCompletionRate(now);
-    final dayOfYear = _dayOfYear(now);
-    final totalDays = _totalDaysInYear(now.year);
+    final progress = _cycleCompletionRate(now, widget.cycle);
+    final elapsedDays = _elapsedCycleDays(now, widget.cycle);
+    final totalDays = widget.cycle.endExclusive
+        .difference(widget.cycle.start)
+        .inDays;
+    final remainingDays = _remainingCycleDays(now, widget.cycle);
+    final title = widget.settings.mode == YearStartMode.normal
+        ? 'How far through ${widget.cycle.start.year}?'
+        : 'How far through your custom year?';
+    final cycleLabel =
+        'Cycle: ${_formatDate(widget.cycle.start)} to ${_formatDate(widget.cycle.displayEnd)}';
+    final statusLabel = now.isBefore(widget.cycle.start)
+        ? 'This cycle has not started yet.'
+        : now.isBefore(widget.cycle.endExclusive)
+        ? 'Today is day $elapsedDays of $totalDays in this cycle.'
+        : 'This cycle is complete.';
+    final footerLabel = now.isBefore(widget.cycle.start)
+        ? '${widget.cycle.start.difference(_dateOnly(now)).inDays} days until this cycle starts.'
+        : now.isBefore(widget.cycle.endExclusive)
+        ? '$remainingDays days remaining in this cycle.'
+        : 'Cycle completed on ${_formatDate(widget.cycle.displayEnd)}.';
 
     return Center(
       child: Padding(
@@ -167,14 +284,16 @@ class _YearProgressPageState extends State<YearProgressPage>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'How far through ${now.year}?',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
+                  Text(title, style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: 12),
                   Text(
-                    'Today is day $dayOfYear of $totalDays.',
+                    cycleLabel,
                     style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    statusLabel,
+                    style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 24),
                   AnimatedBuilder(
@@ -193,17 +312,20 @@ class _YearProgressPageState extends State<YearProgressPage>
                           LinearProgressIndicator(
                             key: const Key('year-progress-bar'),
                             value: animatedProgress,
-                            minHeight: 24,
-                            color: const Color(0xFF00FF38),
+                            minHeight: 30,
+                            color: const Color(0xFFFF3B30),
                             backgroundColor: const Color(0xFF4A4A4A),
-                            borderRadius: BorderRadius.zero,
+                            borderRadius: BorderRadius.circular(999),
                           ),
                           const SizedBox(height: 16),
                           Text(
                             animatedPercentageLabel,
                             key: const Key('year-progress-label'),
                             style: Theme.of(context).textTheme.displaySmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFFFF3B30),
+                                ),
                           ),
                         ],
                       );
@@ -211,7 +333,7 @@ class _YearProgressPageState extends State<YearProgressPage>
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '${totalDays - dayOfYear} days remaining in the year.',
+                    footerLabel,
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 ],
@@ -225,20 +347,124 @@ class _YearProgressPageState extends State<YearProgressPage>
 }
 
 class YearCalendarPage extends StatelessWidget {
-  const YearCalendarPage({super.key, required this.year, required this.today});
+  const YearCalendarPage({super.key, required this.today, required this.cycle});
 
-  final int year;
   final DateTime today;
+  final YearCycleRange cycle;
 
   @override
   Widget build(BuildContext context) {
+    final months = _monthsInRange(cycle);
+
     return ListView.builder(
       key: const Key('year-calendar-list'),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-      itemCount: 12,
+      itemCount: months.length,
       itemBuilder: (context, index) {
-        return _MonthCard(month: index + 1, year: year, today: today);
+        final monthDate = months[index];
+
+        return _MonthCard(
+          month: monthDate.month,
+          year: monthDate.year,
+          today: today,
+          cycle: cycle,
+        );
       },
+    );
+  }
+}
+
+class SettingsPage extends StatelessWidget {
+  const SettingsPage({
+    super.key,
+    required this.today,
+    required this.settings,
+    required this.onModeChanged,
+    required this.onCustomStartChanged,
+  });
+
+  final DateTime today;
+  final YearCycleSettings settings;
+  final ValueChanged<YearStartMode> onModeChanged;
+  final ValueChanged<DateTime> onCustomStartChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveCustomStart = _dateOnly(settings.customStart ?? today);
+
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Year Start',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Choose whether the app uses the normal calendar year or a custom one-year cycle.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                RadioListTile<YearStartMode>(
+                  key: const Key('normal-year-start-option'),
+                  value: YearStartMode.normal,
+                  groupValue: settings.mode,
+                  title: const Text('Normal'),
+                  subtitle: const Text('January 1 to December 31'),
+                  onChanged: (value) {
+                    if (value != null) {
+                      onModeChanged(value);
+                    }
+                  },
+                ),
+                RadioListTile<YearStartMode>(
+                  key: const Key('custom-year-start-option'),
+                  value: YearStartMode.custom,
+                  groupValue: settings.mode,
+                  title: const Text('Custom'),
+                  subtitle: const Text(
+                    'Start from a date and end on the same date next year',
+                  ),
+                  onChanged: (value) {
+                    if (value != null) {
+                      onModeChanged(value);
+                    }
+                  },
+                ),
+                if (settings.mode == YearStartMode.custom) ...[
+                  const SizedBox(height: 12),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Custom start date'),
+                    subtitle: Text(_formatDate(effectiveCustomStart)),
+                    trailing: FilledButton.tonal(
+                      onPressed: () async {
+                        final pickedDate = await showDatePicker(
+                          context: context,
+                          initialDate: effectiveCustomStart,
+                          firstDate: DateTime(2000),
+                          lastDate: DateTime(2100),
+                        );
+
+                        if (pickedDate != null) {
+                          onCustomStartChanged(pickedDate);
+                        }
+                      },
+                      child: const Text('Select date'),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -248,11 +474,13 @@ class _MonthCard extends StatelessWidget {
     required this.month,
     required this.year,
     required this.today,
+    required this.cycle,
   });
 
   final int month;
   final int year;
   final DateTime today;
+  final YearCycleRange cycle;
 
   @override
   Widget build(BuildContext context) {
@@ -313,13 +541,20 @@ class _MonthCard extends StatelessWidget {
               final day = cells[index];
               final cellDate = day == null ? null : DateTime(year, month, day);
               final todayDate = DateTime(today.year, today.month, today.day);
+              final isInCycle =
+                  cellDate != null &&
+                  !_dateOnly(cellDate).isBefore(_dateOnly(cycle.start)) &&
+                  !_dateOnly(cellDate).isAfter(_dateOnly(cycle.displayEnd));
               final isToday =
-                  day != null &&
+                  isInCycle &&
                   today.year == year &&
                   today.month == month &&
                   today.day == day;
               final isPastDay =
-                  cellDate != null && cellDate.isBefore(todayDate) && !isToday;
+                  isInCycle &&
+                  cellDate != null &&
+                  cellDate.isBefore(todayDate) &&
+                  !isToday;
 
               return Center(
                 child: Container(
@@ -329,6 +564,8 @@ class _MonthCard extends StatelessWidget {
                     shape: BoxShape.circle,
                     color: day == null
                         ? Colors.transparent
+                        : !isInCycle
+                        ? Colors.transparent
                         : isToday
                         ? const Color(0xFF00FF38).withValues(alpha: 0.2)
                         : isPastDay
@@ -336,6 +573,8 @@ class _MonthCard extends StatelessWidget {
                         : const Color(0xFF111111).withValues(alpha: 0.45),
                     border: Border.all(
                       color: day == null
+                          ? Colors.transparent
+                          : !isInCycle
                           ? Colors.transparent
                           : isToday
                           ? const Color(0xFF00FF38)
@@ -348,7 +587,9 @@ class _MonthCard extends StatelessWidget {
                     child: Text(
                       day?.toString() ?? '',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: day == null ? Colors.transparent : Colors.white,
+                        color: day == null || !isInCycle
+                            ? Colors.transparent
+                            : Colors.white,
                         fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
                       ),
                     ),
@@ -363,19 +604,76 @@ class _MonthCard extends StatelessWidget {
   }
 }
 
-double _yearCompletionRate(DateTime date) {
-  final startOfYear = DateTime(date.year);
-  final startOfNextYear = DateTime(date.year + 1);
-  final elapsed = date.difference(startOfYear).inSeconds;
-  final total = startOfNextYear.difference(startOfYear).inSeconds;
+YearCycleRange _resolveYearCycle(DateTime today, YearCycleSettings settings) {
+  if (settings.mode == YearStartMode.custom && settings.customStart != null) {
+    final start = _dateOnly(settings.customStart!);
+    final endExclusive = DateTime(start.year + 1, start.month, start.day);
+
+    return YearCycleRange(
+      start: start,
+      endExclusive: endExclusive,
+      displayEnd: endExclusive,
+    );
+  }
+
+  final start = DateTime(today.year);
+  final endExclusive = DateTime(today.year + 1);
+
+  return YearCycleRange(
+    start: start,
+    endExclusive: endExclusive,
+    displayEnd: DateTime(today.year, 12, 31),
+  );
+}
+
+double _cycleCompletionRate(DateTime date, YearCycleRange cycle) {
+  final elapsed = date.difference(cycle.start).inSeconds;
+  final total = cycle.endExclusive.difference(cycle.start).inSeconds;
 
   return (elapsed / total).clamp(0.0, 1.0);
 }
 
-int _dayOfYear(DateTime date) {
-  return date.difference(DateTime(date.year)).inDays + 1;
+int _elapsedCycleDays(DateTime date, YearCycleRange cycle) {
+  if (date.isBefore(cycle.start)) {
+    return 0;
+  }
+
+  if (!date.isBefore(cycle.endExclusive)) {
+    return cycle.endExclusive.difference(cycle.start).inDays;
+  }
+
+  return date.difference(cycle.start).inDays + 1;
 }
 
-int _totalDaysInYear(int year) {
-  return DateTime(year + 1).difference(DateTime(year)).inDays;
+int _remainingCycleDays(DateTime date, YearCycleRange cycle) {
+  if (date.isBefore(cycle.start)) {
+    return cycle.endExclusive.difference(cycle.start).inDays;
+  }
+
+  if (!date.isBefore(cycle.endExclusive)) {
+    return 0;
+  }
+
+  return cycle.endExclusive.difference(date).inDays;
+}
+
+List<DateTime> _monthsInRange(YearCycleRange cycle) {
+  final months = <DateTime>[];
+  var cursor = DateTime(cycle.start.year, cycle.start.month);
+  final endMonth = DateTime(cycle.displayEnd.year, cycle.displayEnd.month);
+
+  while (!cursor.isAfter(endMonth)) {
+    months.add(cursor);
+    cursor = DateTime(cursor.year, cursor.month + 1);
+  }
+
+  return months;
+}
+
+DateTime _dateOnly(DateTime date) {
+  return DateTime(date.year, date.month, date.day);
+}
+
+String _formatDate(DateTime date) {
+  return '${_monthNames[date.month - 1]} ${date.day}, ${date.year}';
 }

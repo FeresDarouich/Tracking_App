@@ -14,6 +14,7 @@ void main() {
     expect(find.text('Year Completion'), findsOneWidget);
     expect(find.text('Progress'), findsOneWidget);
     expect(find.text('Calendar'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
     expect(find.byKey(const Key('year-progress-bar')), findsOneWidget);
     expect(find.byKey(const Key('year-progress-label')), findsOneWidget);
     expect(find.text('0.0%'), findsOneWidget);
@@ -53,6 +54,19 @@ void main() {
     );
     expect(animatedBar.value, 0.5);
     expect(find.text('50.0%'), findsOneWidget);
+
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Progress'));
+    await tester.pump();
+
+    expect(find.text('0.0%'), findsOneWidget);
+
+    final restartedBar = tester.widget<LinearProgressIndicator>(
+      find.byKey(const Key('year-progress-bar')),
+    );
+    expect(restartedBar.value, 0);
   });
 
   testWidgets('switches to a scrollable year calendar page', (
@@ -71,5 +85,33 @@ void main() {
       tester.widget<ListView>(find.byKey(const Key('year-calendar-list'))),
       isNotNull,
     );
+  });
+
+  testWidgets('shows settings page and applies a custom year cycle', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppShell(
+          today: DateTime(2026, 12, 30, 12),
+          initialSettings: YearCycleSettings.custom(
+            customStart: DateTime(2026, 7, 1),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump(const Duration(milliseconds: 180));
+    await tester.pump(const Duration(milliseconds: 2400));
+
+    expect(find.text('50.0%'), findsOneWidget);
+    expect(find.text('Cycle: July 1, 2026 to July 1, 2027'), findsOneWidget);
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Year Start'), findsOneWidget);
+    expect(find.byKey(const Key('custom-year-start-option')), findsOneWidget);
+    expect(find.text('Select date'), findsOneWidget);
   });
 }
