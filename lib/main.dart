@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 void main() {
@@ -26,16 +28,56 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class YearProgressPage extends StatelessWidget {
+class YearProgressPage extends StatefulWidget {
   const YearProgressPage({super.key, DateTime? today}) : _today = today;
 
   final DateTime? _today;
 
   @override
+  State<YearProgressPage> createState() => _YearProgressPageState();
+}
+
+class _YearProgressPageState extends State<YearProgressPage>
+    with SingleTickerProviderStateMixin {
+  static const _animationDuration = Duration(milliseconds: 2400);
+
+  late final AnimationController _controller;
+  Timer? _startTimer;
+  bool _hasAnimationStarted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: _animationDuration,
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _startTimer = Timer(const Duration(milliseconds: 180), () {
+          if (mounted) {
+            setState(() {
+              _hasAnimationStarted = true;
+            });
+            _controller.forward(from: 0);
+          }
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _startTimer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final now = _today ?? DateTime.now();
+    final now = widget._today ?? DateTime.now();
     final progress = _yearCompletionRate(now);
-    final percentageLabel = '${(progress * 100).toStringAsFixed(1)}%';
     final dayOfYear = _dayOfYear(now);
     final totalDays = _totalDaysInYear(now.year);
 
@@ -67,22 +109,40 @@ class YearProgressPage extends StatelessWidget {
                       style: Theme.of(context).textTheme.bodyLarge,
                     ),
                     const SizedBox(height: 24),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(999),
-                      child: LinearProgressIndicator(
-                        key: const Key('year-progress-bar'),
-                        value: progress,
-                        minHeight: 24,
-                        backgroundColor: const Color(0xFFDCE7F3),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      percentageLabel,
-                      key: const Key('year-progress-label'),
-                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                    AnimatedBuilder(
+                      animation: _controller,
+                      builder: (context, child) {
+                        final animatedProgress = _hasAnimationStarted
+                            ? progress *
+                                  Curves.easeOutCubic.transform(
+                                    _controller.value,
+                                  )
+                            : 0.0;
+                        final animatedPercentageLabel =
+                            '${(animatedProgress * 100).toStringAsFixed(1)}%';
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(999),
+                              child: LinearProgressIndicator(
+                                key: const Key('year-progress-bar'),
+                                value: animatedProgress,
+                                minHeight: 24,
+                                backgroundColor: const Color(0xFFDCE7F3),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              animatedPercentageLabel,
+                              key: const Key('year-progress-label'),
+                              style: Theme.of(context).textTheme.displaySmall
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 8),
                     Text(
