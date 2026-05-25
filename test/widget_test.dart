@@ -116,5 +116,43 @@ void main() {
     expect(find.text('Year Start'), findsOneWidget);
     expect(find.byKey(const Key('custom-year-start-option')), findsOneWidget);
     expect(find.text('Select date'), findsOneWidget);
+    expect(find.text('Goal'), findsOneWidget);
+    expect(find.byKey(const Key('goal-name-field')), findsOneWidget);
+    expect(find.text('Select goal date'), findsOneWidget);
+  });
+
+  testWidgets('shows goal progress and highlights the goal date in calendar', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppShell(
+          today: DateTime(2026, 7, 2, 12),
+          initialGoal: GoalEntry(
+            name: 'Launch MVP',
+            date: DateTime(2026, 8, 15),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('goal-progress-card')), findsOneWidget);
+    expect(find.text('Launch MVP'), findsOneWidget);
+    expect(find.text('Goal date: August 15, 2026'), findsOneWidget);
+    expect(find.text('44 days until this goal.'), findsOneWidget);
+
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('goal-calendar-date')), findsOneWidget);
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('current-goal-summary')), findsOneWidget);
+    expect(
+      find.text('Current goal: Launch MVP on August 15, 2026'),
+      findsOneWidget,
+    );
   });
 }

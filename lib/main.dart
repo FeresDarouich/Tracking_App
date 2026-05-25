@@ -25,6 +25,17 @@ const _weekdayLabels = <String>['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 
 enum YearStartMode { normal, custom }
 
+class GoalEntry {
+  const GoalEntry({required this.name, required this.date});
+
+  final String name;
+  final DateTime date;
+
+  GoalEntry copyWith({String? name, DateTime? date}) {
+    return GoalEntry(name: name ?? this.name, date: date ?? this.date);
+  }
+}
+
 class YearCycleSettings {
   const YearCycleSettings._({required this.mode, this.customStart});
 
@@ -89,11 +100,14 @@ class AppShell extends StatefulWidget {
     super.key,
     DateTime? today,
     YearCycleSettings? initialSettings,
+    GoalEntry? initialGoal,
   }) : _today = today,
-       _initialSettings = initialSettings;
+       _initialSettings = initialSettings,
+       _initialGoal = initialGoal;
 
   final DateTime? _today;
   final YearCycleSettings? _initialSettings;
+  final GoalEntry? _initialGoal;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -104,11 +118,13 @@ class _AppShellState extends State<AppShell> {
   int _progressPageVersion = 0;
   int _calendarPageVersion = 0;
   late YearCycleSettings _settings;
+  GoalEntry? _goal;
 
   @override
   void initState() {
     super.initState();
     _settings = widget._initialSettings ?? const YearCycleSettings.normal();
+    _goal = widget._initialGoal;
   }
 
   void _updateYearStartMode(YearStartMode mode) {
@@ -121,7 +137,9 @@ class _AppShellState extends State<AppShell> {
             ? _dateOnly(_settings.customStart ?? today)
             : _settings.customStart,
       );
+      _goal = _sanitizeGoal(_goal, _resolveYearCycle(today, _settings));
       _progressPageVersion++;
+      _calendarPageVersion++;
     });
   }
 
@@ -131,7 +149,23 @@ class _AppShellState extends State<AppShell> {
         mode: YearStartMode.custom,
         customStart: _dateOnly(customStart),
       );
+      _goal = _sanitizeGoal(
+        _goal,
+        _resolveYearCycle(widget._today ?? DateTime.now(), _settings),
+      );
       _progressPageVersion++;
+      _calendarPageVersion++;
+    });
+  }
+
+  void _updateGoal(GoalEntry? goal) {
+    setState(() {
+      _goal = _sanitizeGoal(
+        goal,
+        _resolveYearCycle(widget._today ?? DateTime.now(), _settings),
+      );
+      _progressPageVersion++;
+      _calendarPageVersion++;
     });
   }
 
@@ -145,17 +179,22 @@ class _AppShellState extends State<AppShell> {
         today: today,
         settings: _settings,
         cycle: cycle,
+        goal: _goal,
       ),
       YearCalendarPage(
         key: ValueKey(_calendarPageVersion),
         today: today,
         cycle: cycle,
+        goal: _goal,
       ),
       SettingsPage(
         today: today,
         settings: _settings,
+        cycle: cycle,
+        goal: _goal,
         onModeChanged: _updateYearStartMode,
         onCustomStartChanged: _updateCustomStart,
+        onGoalChanged: _updateGoal,
       ),
     ];
     final titles = ['Year Completion', 'Year Calendar', 'Settings'];
@@ -204,11 +243,13 @@ class YearProgressPage extends StatefulWidget {
     DateTime? today,
     required this.settings,
     required this.cycle,
+    required this.goal,
   }) : _today = today;
 
   final DateTime? _today;
   final YearCycleSettings settings;
   final YearCycleRange cycle;
+  final GoalEntry? goal;
 
   @override
   State<YearProgressPage> createState() => _YearProgressPageState();
@@ -273,85 +314,159 @@ class _YearProgressPageState extends State<YearProgressPage>
         : now.isBefore(widget.cycle.endExclusive)
         ? '$remainingDays days remaining in this cycle.'
         : 'Cycle completed on ${_formatDate(widget.cycle.displayEnd)}.';
+    final goalProgress = widget.goal == null
+        ? null
+        : _goalCompletionRate(now, widget.cycle.start, widget.goal!.date);
+    final goalStatusLabel = widget.goal == null
+        ? null
+        : _goalStatusLabel(now, widget.goal!);
 
     return Center(
-      child: Padding(
+      child: ListView(
         padding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Card(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(28),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 12),
-                  Text(
-                    statusLabel,
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  ),
-                  const SizedBox(height: 24),
-                  AnimatedBuilder(
-                    animation: _controller,
-                    builder: (context, child) {
-                      final animatedProgress = _hasAnimationStarted
-                          ? progress *
-                                Curves.easeOutCubic.transform(_controller.value)
-                          : 0.0;
-                      final animatedPercentageLabel =
-                          '${(animatedProgress * 100).toStringAsFixed(1)}%';
+        children: [
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Card(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        statusLabel,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                      const SizedBox(height: 24),
+                      AnimatedBuilder(
+                        animation: _controller,
+                        builder: (context, child) {
+                          final animatedProgress = _hasAnimationStarted
+                              ? progress *
+                                    Curves.easeOutCubic.transform(
+                                      _controller.value,
+                                    )
+                              : 0.0;
+                          final animatedPercentageLabel =
+                              '${(animatedProgress * 100).toStringAsFixed(1)}%';
 
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          LinearProgressIndicator(
-                            key: const Key('year-progress-bar'),
-                            value: animatedProgress,
-                            minHeight: 30,
-                            color: const Color(0xFFFF3B30),
-                            backgroundColor: const Color(0xFF4A4A4A),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            animatedPercentageLabel,
-                            key: const Key('year-progress-label'),
-                            style: Theme.of(context).textTheme.displaySmall
-                                ?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                  color: const Color(0xFFFF3B30),
-                                ),
-                          ),
-                        ],
-                      );
-                    },
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              LinearProgressIndicator(
+                                key: const Key('year-progress-bar'),
+                                value: animatedProgress,
+                                minHeight: 30,
+                                color: const Color(0xFFFF3B30),
+                                backgroundColor: const Color(0xFF4A4A4A),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                animatedPercentageLabel,
+                                key: const Key('year-progress-label'),
+                                style: Theme.of(context).textTheme.displaySmall
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFFFF3B30),
+                                    ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        footerLabel,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    footerLabel,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
+          if (widget.goal != null &&
+              goalProgress != null &&
+              goalStatusLabel != null)
+            const SizedBox(height: 16),
+          if (widget.goal != null &&
+              goalProgress != null &&
+              goalStatusLabel != null)
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Card(
+                  key: const Key('goal-progress-card'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.goal!.name,
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Goal date: ${_formatDate(widget.goal!.date)}',
+                          style: Theme.of(context).textTheme.bodyLarge,
+                        ),
+                        const SizedBox(height: 16),
+                        LinearProgressIndicator(
+                          key: const Key('goal-progress-bar'),
+                          value: goalProgress,
+                          minHeight: 18,
+                          color: const Color(0xFFFFD60A),
+                          backgroundColor: const Color(0xFF4A4A4A),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          '${(goalProgress * 100).toStringAsFixed(1)}%',
+                          key: const Key('goal-progress-label'),
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                color: const Color(0xFFFFD60A),
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(goalStatusLabel),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
 }
 
 class YearCalendarPage extends StatefulWidget {
-  const YearCalendarPage({super.key, required this.today, required this.cycle});
+  const YearCalendarPage({
+    super.key,
+    required this.today,
+    required this.cycle,
+    required this.goal,
+  });
 
   final DateTime today;
   final YearCycleRange cycle;
+  final GoalEntry? goal;
 
   @override
   State<YearCalendarPage> createState() => _YearCalendarPageState();
@@ -415,6 +530,7 @@ class _YearCalendarPageState extends State<YearCalendarPage> {
               year: monthDate.year,
               today: widget.today,
               cycle: widget.cycle,
+              goal: widget.goal,
             ),
           );
         }),
@@ -423,23 +539,68 @@ class _YearCalendarPageState extends State<YearCalendarPage> {
   }
 }
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   const SettingsPage({
     super.key,
     required this.today,
     required this.settings,
+    required this.cycle,
+    required this.goal,
     required this.onModeChanged,
     required this.onCustomStartChanged,
+    required this.onGoalChanged,
   });
 
   final DateTime today;
   final YearCycleSettings settings;
+  final YearCycleRange cycle;
+  final GoalEntry? goal;
   final ValueChanged<YearStartMode> onModeChanged;
   final ValueChanged<DateTime> onCustomStartChanged;
+  final ValueChanged<GoalEntry?> onGoalChanged;
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  late final TextEditingController _goalNameController;
+  late DateTime _selectedGoalDate;
+
+  @override
+  void initState() {
+    super.initState();
+    _goalNameController = TextEditingController(text: widget.goal?.name ?? '');
+    _selectedGoalDate = _dateOnly(widget.goal?.date ?? widget.today);
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.goal?.name != widget.goal?.name) {
+      _goalNameController.text = widget.goal?.name ?? '';
+    }
+
+    if (oldWidget.goal?.date != widget.goal?.date ||
+        oldWidget.cycle.start != widget.cycle.start ||
+        oldWidget.cycle.displayEnd != widget.cycle.displayEnd) {
+      final fallbackDate = _clampDateToCycle(widget.today, widget.cycle);
+      _selectedGoalDate = _dateOnly(widget.goal?.date ?? fallbackDate);
+    }
+  }
+
+  @override
+  void dispose() {
+    _goalNameController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final effectiveCustomStart = _dateOnly(settings.customStart ?? today);
+    final effectiveCustomStart = _dateOnly(
+      widget.settings.customStart ?? widget.today,
+    );
 
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -463,30 +624,30 @@ class SettingsPage extends StatelessWidget {
                 RadioListTile<YearStartMode>(
                   key: const Key('normal-year-start-option'),
                   value: YearStartMode.normal,
-                  groupValue: settings.mode,
+                  groupValue: widget.settings.mode,
                   title: const Text('Normal'),
                   subtitle: const Text('January 1 to December 31'),
                   onChanged: (value) {
                     if (value != null) {
-                      onModeChanged(value);
+                      widget.onModeChanged(value);
                     }
                   },
                 ),
                 RadioListTile<YearStartMode>(
                   key: const Key('custom-year-start-option'),
                   value: YearStartMode.custom,
-                  groupValue: settings.mode,
+                  groupValue: widget.settings.mode,
                   title: const Text('Custom'),
                   subtitle: const Text(
                     'Start from a date and end on the same date next year',
                   ),
                   onChanged: (value) {
                     if (value != null) {
-                      onModeChanged(value);
+                      widget.onModeChanged(value);
                     }
                   },
                 ),
-                if (settings.mode == YearStartMode.custom) ...[
+                if (widget.settings.mode == YearStartMode.custom) ...[
                   const SizedBox(height: 12),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
@@ -502,11 +663,106 @@ class SettingsPage extends StatelessWidget {
                         );
 
                         if (pickedDate != null) {
-                          onCustomStartChanged(pickedDate);
+                          widget.onCustomStartChanged(pickedDate);
                         }
                       },
                       child: const Text('Select date'),
                     ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Goal', style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: 8),
+                Text(
+                  'Create one goal with a name and a date. That date will be highlighted in the calendar and tracked on the progress page.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  key: const Key('goal-name-field'),
+                  controller: _goalNameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Goal name',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Goal date'),
+                  subtitle: Text(_formatDate(_selectedGoalDate)),
+                  trailing: FilledButton.tonal(
+                    onPressed: () async {
+                      final pickedDate = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedGoalDate,
+                        firstDate: widget.cycle.start,
+                        lastDate: widget.cycle.displayEnd,
+                      );
+
+                      if (pickedDate != null) {
+                        setState(() {
+                          _selectedGoalDate = _dateOnly(pickedDate);
+                        });
+                      }
+                    },
+                    child: const Text('Select goal date'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    FilledButton(
+                      key: const Key('save-goal-button'),
+                      onPressed: () {
+                        final goalName = _goalNameController.text.trim();
+
+                        if (goalName.isEmpty) {
+                          return;
+                        }
+
+                        widget.onGoalChanged(
+                          GoalEntry(
+                            name: goalName,
+                            date: _dateOnly(_selectedGoalDate),
+                          ),
+                        );
+                      },
+                      child: const Text('Save goal'),
+                    ),
+                    const SizedBox(width: 12),
+                    if (widget.goal != null)
+                      TextButton(
+                        key: const Key('clear-goal-button'),
+                        onPressed: () {
+                          _goalNameController.clear();
+                          setState(() {
+                            _selectedGoalDate = _clampDateToCycle(
+                              widget.today,
+                              widget.cycle,
+                            );
+                          });
+                          widget.onGoalChanged(null);
+                        },
+                        child: const Text('Clear goal'),
+                      ),
+                  ],
+                ),
+                if (widget.goal != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'Current goal: ${widget.goal!.name} on ${_formatDate(widget.goal!.date)}',
+                    key: const Key('current-goal-summary'),
                   ),
                 ],
               ],
@@ -524,12 +780,14 @@ class _MonthCard extends StatelessWidget {
     required this.year,
     required this.today,
     required this.cycle,
+    required this.goal,
   });
 
   final int month;
   final int year;
   final DateTime today;
   final YearCycleRange cycle;
+  final GoalEntry? goal;
 
   @override
   Widget build(BuildContext context) {
@@ -599,14 +857,21 @@ class _MonthCard extends StatelessWidget {
                   today.year == year &&
                   today.month == month &&
                   today.day == day;
+              final isGoalDate =
+                  isInCycle &&
+                  day != null &&
+                  goal != null &&
+                  _dateOnly(goal!.date) == DateTime(year, month, day);
               final isPastDay =
                   isInCycle &&
                   cellDate != null &&
                   cellDate.isBefore(todayDate) &&
-                  !isToday;
+                  !isToday &&
+                  !isGoalDate;
 
               return Center(
                 child: Container(
+                  key: isGoalDate ? const Key('goal-calendar-date') : null,
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
@@ -615,6 +880,8 @@ class _MonthCard extends StatelessWidget {
                         ? Colors.transparent
                         : !isInCycle
                         ? Colors.transparent
+                        : isGoalDate
+                        ? const Color(0xFFFFD60A).withValues(alpha: 0.28)
                         : isToday
                         ? const Color(0xFF00FF38).withValues(alpha: 0.2)
                         : isPastDay
@@ -625,6 +892,8 @@ class _MonthCard extends StatelessWidget {
                           ? Colors.transparent
                           : !isInCycle
                           ? Colors.transparent
+                          : isGoalDate
+                          ? const Color(0xFFFFD60A)
                           : isToday
                           ? const Color(0xFF00FF38)
                           : isPastDay
@@ -682,6 +951,24 @@ double _cycleCompletionRate(DateTime date, YearCycleRange cycle) {
   return (elapsed / total).clamp(0.0, 1.0);
 }
 
+double _goalCompletionRate(
+  DateTime today,
+  DateTime cycleStart,
+  DateTime goalDate,
+) {
+  final start = _dateOnly(cycleStart);
+  final end = _dateOnly(goalDate);
+  final current = _dateOnly(today);
+  final totalDays = end.difference(start).inDays;
+
+  if (totalDays <= 0) {
+    return !current.isBefore(end) ? 1.0 : 0.0;
+  }
+
+  final elapsedDays = current.difference(start).inDays;
+  return (elapsedDays / totalDays).clamp(0.0, 1.0);
+}
+
 int _elapsedCycleDays(DateTime date, YearCycleRange cycle) {
   if (date.isBefore(cycle.start)) {
     return 0;
@@ -704,6 +991,21 @@ int _remainingCycleDays(DateTime date, YearCycleRange cycle) {
   }
 
   return cycle.endExclusive.difference(date).inDays;
+}
+
+String _goalStatusLabel(DateTime today, GoalEntry goal) {
+  final current = _dateOnly(today);
+  final goalDate = _dateOnly(goal.date);
+
+  if (current.isAfter(goalDate)) {
+    return 'Goal date passed ${current.difference(goalDate).inDays} days ago.';
+  }
+
+  if (current == goalDate) {
+    return 'Goal date is today.';
+  }
+
+  return '${goalDate.difference(current).inDays} days until this goal.';
 }
 
 List<DateTime> _monthsInRange(YearCycleRange cycle) {
@@ -743,6 +1045,36 @@ int _targetMonthIndex(
 
 DateTime _dateOnly(DateTime date) {
   return DateTime(date.year, date.month, date.day);
+}
+
+DateTime _clampDateToCycle(DateTime date, YearCycleRange cycle) {
+  final normalizedDate = _dateOnly(date);
+  final cycleStart = _dateOnly(cycle.start);
+  final cycleEnd = _dateOnly(cycle.displayEnd);
+
+  if (normalizedDate.isBefore(cycleStart)) {
+    return cycleStart;
+  }
+
+  if (normalizedDate.isAfter(cycleEnd)) {
+    return cycleEnd;
+  }
+
+  return normalizedDate;
+}
+
+GoalEntry? _sanitizeGoal(GoalEntry? goal, YearCycleRange cycle) {
+  if (goal == null) {
+    return null;
+  }
+
+  final normalizedDate = _dateOnly(goal.date);
+  if (normalizedDate.isBefore(_dateOnly(cycle.start)) ||
+      normalizedDate.isAfter(_dateOnly(cycle.displayEnd))) {
+    return null;
+  }
+
+  return goal.copyWith(date: normalizedDate, name: goal.name.trim());
 }
 
 String _formatDate(DateTime date) {
