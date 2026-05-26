@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const MyApp());
@@ -67,6 +68,77 @@ class YearCycleRange {
   final DateTime displayEnd;
 }
 
+class PersistedAppState {
+  const PersistedAppState({required this.settings, required this.goal});
+
+  final YearCycleSettings settings;
+  final GoalEntry? goal;
+}
+
+class AppStorage {
+  static const _yearStartModeKey = 'year_start_mode';
+  static const _customStartKey = 'custom_start_date';
+  static const _goalNameKey = 'goal_name';
+  static const _goalDateKey = 'goal_date';
+
+  static Future<PersistedAppState> load() async {
+    final preferences = await SharedPreferences.getInstance();
+    final modeName = preferences.getString(_yearStartModeKey);
+    final customStartValue = preferences.getString(_customStartKey);
+    final goalName = preferences.getString(_goalNameKey);
+    final goalDateValue = preferences.getString(_goalDateKey);
+
+    final mode = YearStartMode.values.cast<YearStartMode?>().firstWhere(
+          (value) => value?.name == modeName,
+          orElse: () => YearStartMode.normal,
+        ) ??
+        YearStartMode.normal;
+
+    final customStart = customStartValue == null
+        ? null
+        : DateTime.tryParse(customStartValue);
+    final goalDate = goalDateValue == null ? null : DateTime.tryParse(goalDateValue);
+
+    return PersistedAppState(
+      settings: mode == YearStartMode.custom && customStart != null
+          ? YearCycleSettings.custom(customStart: _dateOnly(customStart))
+          : const YearCycleSettings.normal(),
+      goal: goalName == null || goalName.trim().isEmpty || goalDate == null
+          ? null
+          : GoalEntry(name: goalName.trim(), date: _dateOnly(goalDate)),
+    );
+  }
+
+  static Future<void> save({
+    required YearCycleSettings settings,
+    required GoalEntry? goal,
+  }) async {
+    final preferences = await SharedPreferences.getInstance();
+
+    await preferences.setString(_yearStartModeKey, settings.mode.name);
+    if (settings.customStart == null) {
+      await preferences.remove(_customStartKey);
+    } else {
+      await preferences.setString(
+        _customStartKey,
+        _dateOnly(settings.customStart!).toIso8601String(),
+      );
+    }
+
+    if (goal == null || goal.name.trim().isEmpty) {
+      await preferences.remove(_goalNameKey);
+      await preferences.remove(_goalDateKey);
+      return;
+    }
+
+    await preferences.setString(_goalNameKey, goal.name.trim());
+    await preferences.setString(
+      _goalDateKey,
+      _dateOnly(goal.date).toIso8601String(),
+    );
+  }
+}
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -125,10 +197,44 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     _settings = widget._initialSettings ?? const YearCycleSettings.normal();
     _goal = widget._initialGoal;
+
+    if (widget._initialSettings == null && widget._initialGoal == null) {
+      unawaited(_loadPersistedState());
+    }
+  }
+
+  DateTime get _currentToday => widget._today ?? DateTime.now();
+
+  Future<void> _loadPersistedState() async {
+    final persistedState = await AppStorage.load();
+    final cycle = _resolveYearCycle(_currentToday, persistedState.settings);
+    final sanitizedGoal = _sanitizeGoal(persistedState.goal, cycle);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _settings = persistedState.settings;
+      _goal = sanitizedGoal;
+      _progressPageVersion++;
+      _calendarPageVersion++;
+    });
+
+    if (sanitizedGoal != persistedState.goal) {
+      unawaited(_persistState());
+    }
+  }
+
+  Future<void> _persistState() {
+    final cycle = _resolveYearCycle(_currentToday, _settings);
+    final sanitizedGoal = _sanitizeGoal(_goal, cycle);
+
+    return AppStorage.save(settings: _settings, goal: sanitizedGoal);
   }
 
   void _updateYearStartMode(YearStartMode mode) {
-    final today = _dateOnly(widget._today ?? DateTime.now());
+    final today = _dateOnly(_currentToday);
 
     setState(() {
       _settings = _settings.copyWith(
@@ -141,6 +247,8 @@ class _AppShellState extends State<AppShell> {
       _progressPageVersion++;
       _calendarPageVersion++;
     });
+
+    unawaited(_persistState());
   }
 
   void _updateCustomStart(DateTime customStart) {
@@ -149,29 +257,27 @@ class _AppShellState extends State<AppShell> {
         mode: YearStartMode.custom,
         customStart: _dateOnly(customStart),
       );
-      _goal = _sanitizeGoal(
-        _goal,
-        _resolveYearCycle(widget._today ?? DateTime.now(), _settings),
-      );
+      _goal = _sanitizeGoal(_goal, _resolveYearCycle(_currentToday, _settings));
       _progressPageVersion++;
       _calendarPageVersion++;
     });
+
+    unawaited(_persistState());
   }
 
   void _updateGoal(GoalEntry? goal) {
     setState(() {
-      _goal = _sanitizeGoal(
-        goal,
-        _resolveYearCycle(widget._today ?? DateTime.now(), _settings),
-      );
+      _goal = _sanitizeGoal(goal, _resolveYearCycle(_currentToday, _settings));
       _progressPageVersion++;
       _calendarPageVersion++;
     });
+
+    unawaited(_persistState());
   }
 
   @override
   Widget build(BuildContext context) {
-    final today = widget._today ?? DateTime.now();
+    final today = _currentToday;
     final cycle = _resolveYearCycle(today, _settings);
     final pages = [
       YearProgressPage(
@@ -411,40 +517,52 @@ class _YearProgressPageState extends State<YearProgressPage>
                   key: const Key('goal-progress-card'),
                   child: Padding(
                     padding: const EdgeInsets.all(24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.goal!.name,
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Goal date: ${_formatDate(widget.goal!.date)}',
-                          style: Theme.of(context).textTheme.bodyLarge,
-                        ),
-                        const SizedBox(height: 16),
-                        LinearProgressIndicator(
-                          key: const Key('goal-progress-bar'),
-                          value: goalProgress,
-                          minHeight: 18,
-                          color: const Color(0xFFFFD60A),
-                          backgroundColor: const Color(0xFF4A4A4A),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          '${(goalProgress * 100).toStringAsFixed(1)}%',
-                          key: const Key('goal-progress-label'),
-                          style: Theme.of(context).textTheme.titleLarge
-                              ?.copyWith(
-                                color: const Color(0xFFFFD60A),
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(goalStatusLabel),
-                      ],
+                    child: AnimatedBuilder(
+                      animation: _controller,
+                      builder: (context, child) {
+                        final animatedGoalProgress = _hasAnimationStarted
+                            ? goalProgress *
+                                  Curves.easeOutCubic.transform(
+                                    _controller.value,
+                                  )
+                            : 0.0;
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.goal!.name,
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Goal date: ${_formatDate(widget.goal!.date)}',
+                              style: Theme.of(context).textTheme.bodyLarge,
+                            ),
+                            const SizedBox(height: 16),
+                            LinearProgressIndicator(
+                              key: const Key('goal-progress-bar'),
+                              value: animatedGoalProgress,
+                              minHeight: 18,
+                              color: const Color(0xFFFFD60A),
+                              backgroundColor: const Color(0xFF4A4A4A),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              '${(animatedGoalProgress * 100).toStringAsFixed(1)}%',
+                              key: const Key('goal-progress-label'),
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(
+                                    color: const Color(0xFFFFD60A),
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(goalStatusLabel),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ),

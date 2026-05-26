@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:trackingapp/main.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   testWidgets('shows progress tab by default and animates year completion', (
     WidgetTester tester,
   ) async {
@@ -136,10 +141,38 @@ void main() {
       ),
     );
 
+    final initialGoalBar = tester.widget<LinearProgressIndicator>(
+      find.byKey(const Key('goal-progress-bar')),
+    );
+    expect(initialGoalBar.value, 0);
+    expect(find.text('0.0%'), findsWidgets);
+
+    await tester.pump(const Duration(milliseconds: 180));
+    await tester.pump(const Duration(milliseconds: 1200));
+
+    final midAnimationGoalBar = tester.widget<LinearProgressIndicator>(
+      find.byKey(const Key('goal-progress-bar')),
+    );
+    expect(midAnimationGoalBar.value, greaterThan(0));
+    expect(midAnimationGoalBar.value, lessThan(1));
+
+    final midAnimationGoalLabel = tester.widget<Text>(
+      find.byKey(const Key('goal-progress-label')),
+    );
+    expect(midAnimationGoalLabel.data, isNot('0.0%'));
+
+    await tester.pump(const Duration(milliseconds: 1200));
+
     expect(find.byKey(const Key('goal-progress-card')), findsOneWidget);
     expect(find.text('Launch MVP'), findsOneWidget);
     expect(find.text('Goal date: August 15, 2026'), findsOneWidget);
     expect(find.text('44 days until this goal.'), findsOneWidget);
+
+    final animatedGoalBar = tester.widget<LinearProgressIndicator>(
+      find.byKey(const Key('goal-progress-bar')),
+    );
+    expect(animatedGoalBar.value, closeTo(182 / 226, 0.0001));
+    expect(find.text('80.5%'), findsOneWidget);
 
     await tester.tap(find.text('Calendar'));
     await tester.pumpAndSettle();
@@ -154,5 +187,39 @@ void main() {
       find.text('Current goal: Launch MVP on August 15, 2026'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('persists the saved goal after reopening the app', (
+    WidgetTester tester,
+  ) async {
+    const goalName = 'Launch MVP';
+    final today = DateTime(2026, 7, 2, 12);
+
+    await tester.pumpWidget(MaterialApp(home: AppShell(today: today)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('goal-name-field')), goalName);
+    await tester.ensureVisible(find.byKey(const Key('save-goal-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('save-goal-button')));
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(MaterialApp(home: AppShell(today: today)));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('goal-progress-card')), findsOneWidget);
+    expect(find.text(goalName), findsOneWidget);
+    expect(find.text('Goal date: July 2, 2026'), findsOneWidget);
+
+    await tester.tap(find.text('Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('goal-calendar-date')), findsOneWidget);
   });
 }
