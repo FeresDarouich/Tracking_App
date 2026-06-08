@@ -88,7 +88,8 @@ class AppStorage {
     final goalName = preferences.getString(_goalNameKey);
     final goalDateValue = preferences.getString(_goalDateKey);
 
-    final mode = YearStartMode.values.cast<YearStartMode?>().firstWhere(
+    final mode =
+        YearStartMode.values.cast<YearStartMode?>().firstWhere(
           (value) => value?.name == modeName,
           orElse: () => YearStartMode.normal,
         ) ??
@@ -97,7 +98,9 @@ class AppStorage {
     final customStart = customStartValue == null
         ? null
         : DateTime.tryParse(customStartValue);
-    final goalDate = goalDateValue == null ? null : DateTime.tryParse(goalDateValue);
+    final goalDate = goalDateValue == null
+        ? null
+        : DateTime.tryParse(goalDateValue);
 
     return PersistedAppState(
       settings: mode == YearStartMode.custom && customStart != null
@@ -682,6 +685,190 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                'Year Start',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              subtitle: Text(
+                widget.settings.mode == YearStartMode.normal
+                    ? 'Normal (January 1 to December 31)'
+                    : 'Custom from ${_formatDate(widget.settings.customStart ?? widget.today)}',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) => YearStartSettingsPage(
+                      today: widget.today,
+                      settings: widget.settings,
+                      onModeChanged: widget.onModeChanged,
+                      onCustomStartChanged: widget.onCustomStartChanged,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                'Goal',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              subtitle: Text(
+                widget.goal == null
+                    ? 'No goal set'
+                    : '${widget.goal!.name} on ${_formatDate(widget.goal!.date)}',
+                key: const Key('current-goal-summary'),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) => GoalSettingsPage(
+                      today: widget.today,
+                      cycle: widget.cycle,
+                      goal: widget.goal,
+                      onGoalChanged: widget.onGoalChanged,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class YearStartSettingsPage extends StatelessWidget {
+  const YearStartSettingsPage({
+    super.key,
+    required this.today,
+    required this.settings,
+    required this.onModeChanged,
+    required this.onCustomStartChanged,
+  });
+
+  final DateTime today;
+  final YearCycleSettings settings;
+  final ValueChanged<YearStartMode> onModeChanged;
+  final ValueChanged<DateTime> onCustomStartChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveCustomStart = _dateOnly(settings.customStart ?? today);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Year Start')),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Choose whether the app uses the normal calendar year or a custom one-year cycle.',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 16),
+                  RadioListTile<YearStartMode>(
+                    key: const Key('normal-year-start-option'),
+                    value: YearStartMode.normal,
+                    groupValue: settings.mode,
+                    title: const Text('Normal'),
+                    subtitle: const Text('January 1 to December 31'),
+                    onChanged: (value) {
+                      if (value != null) {
+                        onModeChanged(value);
+                      }
+                    },
+                  ),
+                  RadioListTile<YearStartMode>(
+                    key: const Key('custom-year-start-option'),
+                    value: YearStartMode.custom,
+                    groupValue: settings.mode,
+                    title: const Text('Custom'),
+                    subtitle: const Text(
+                      'Start from a date and end on the same date next year',
+                    ),
+                    onChanged: (value) {
+                      if (value != null) {
+                        onModeChanged(value);
+                      }
+                    },
+                  ),
+                  if (settings.mode == YearStartMode.custom) ...[
+                    const SizedBox(height: 12),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Custom start date'),
+                      subtitle: Text(_formatDate(effectiveCustomStart)),
+                      trailing: FilledButton.tonal(
+                        onPressed: () async {
+                          final pickedDate = await showDatePicker(
+                            context: context,
+                            initialDate: effectiveCustomStart,
+                            firstDate: DateTime(2000),
+                            lastDate: DateTime(2100),
+                          );
+
+                          if (pickedDate != null) {
+                            onCustomStartChanged(pickedDate);
+                          }
+                        },
+                        child: const Text('Select date'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class GoalSettingsPage extends StatefulWidget {
+  const GoalSettingsPage({
+    super.key,
+    required this.today,
+    required this.cycle,
+    required this.goal,
+    required this.onGoalChanged,
+  });
+
+  final DateTime today;
+  final YearCycleRange cycle;
+  final GoalEntry? goal;
+  final ValueChanged<GoalEntry?> onGoalChanged;
+
+  @override
+  State<GoalSettingsPage> createState() => _GoalSettingsPageState();
+}
+
+class _GoalSettingsPageState extends State<GoalSettingsPage> {
   late final TextEditingController _goalNameController;
   late DateTime _selectedGoalDate;
 
@@ -689,11 +876,13 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _goalNameController = TextEditingController(text: widget.goal?.name ?? '');
-    _selectedGoalDate = _dateOnly(widget.goal?.date ?? widget.today);
+    _selectedGoalDate = _dateOnly(
+      widget.goal?.date ?? _clampDateToCycle(widget.today, widget.cycle),
+    );
   }
 
   @override
-  void didUpdateWidget(covariant SettingsPage oldWidget) {
+  void didUpdateWidget(covariant GoalSettingsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
 
     if (oldWidget.goal?.name != widget.goal?.name) {
@@ -716,178 +905,104 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final effectiveCustomStart = _dateOnly(
-      widget.settings.customStart ?? widget.today,
-    );
-
-    return ListView(
-      padding: const EdgeInsets.all(24),
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Year Start',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Choose whether the app uses the normal calendar year or a custom one-year cycle.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 16),
-                RadioListTile<YearStartMode>(
-                  key: const Key('normal-year-start-option'),
-                  value: YearStartMode.normal,
-                  groupValue: widget.settings.mode,
-                  title: const Text('Normal'),
-                  subtitle: const Text('January 1 to December 31'),
-                  onChanged: (value) {
-                    if (value != null) {
-                      widget.onModeChanged(value);
-                    }
-                  },
-                ),
-                RadioListTile<YearStartMode>(
-                  key: const Key('custom-year-start-option'),
-                  value: YearStartMode.custom,
-                  groupValue: widget.settings.mode,
-                  title: const Text('Custom'),
-                  subtitle: const Text(
-                    'Start from a date and end on the same date next year',
+    return Scaffold(
+      appBar: AppBar(title: const Text('Goal')),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Create one goal with a name and a date. That date will be highlighted in the calendar and tracked on the progress page.',
+                    style: Theme.of(context).textTheme.bodyMedium,
                   ),
-                  onChanged: (value) {
-                    if (value != null) {
-                      widget.onModeChanged(value);
-                    }
-                  },
-                ),
-                if (widget.settings.mode == YearStartMode.custom) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 16),
+                  TextField(
+                    key: const Key('goal-name-field'),
+                    controller: _goalNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Goal name',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Custom start date'),
-                    subtitle: Text(_formatDate(effectiveCustomStart)),
+                    title: const Text('Goal date'),
+                    subtitle: Text(_formatDate(_selectedGoalDate)),
                     trailing: FilledButton.tonal(
                       onPressed: () async {
                         final pickedDate = await showDatePicker(
                           context: context,
-                          initialDate: effectiveCustomStart,
-                          firstDate: DateTime(2000),
-                          lastDate: DateTime(2100),
+                          initialDate: _selectedGoalDate,
+                          firstDate: widget.cycle.start,
+                          lastDate: widget.cycle.displayEnd,
                         );
 
                         if (pickedDate != null) {
-                          widget.onCustomStartChanged(pickedDate);
-                        }
-                      },
-                      child: const Text('Select date'),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Goal', style: Theme.of(context).textTheme.headlineSmall),
-                const SizedBox(height: 8),
-                Text(
-                  'Create one goal with a name and a date. That date will be highlighted in the calendar and tracked on the progress page.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  key: const Key('goal-name-field'),
-                  controller: _goalNameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Goal name',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Goal date'),
-                  subtitle: Text(_formatDate(_selectedGoalDate)),
-                  trailing: FilledButton.tonal(
-                    onPressed: () async {
-                      final pickedDate = await showDatePicker(
-                        context: context,
-                        initialDate: _selectedGoalDate,
-                        firstDate: widget.cycle.start,
-                        lastDate: widget.cycle.displayEnd,
-                      );
-
-                      if (pickedDate != null) {
-                        setState(() {
-                          _selectedGoalDate = _dateOnly(pickedDate);
-                        });
-                      }
-                    },
-                    child: const Text('Select goal date'),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    FilledButton(
-                      key: const Key('save-goal-button'),
-                      onPressed: () {
-                        final goalName = _goalNameController.text.trim();
-
-                        if (goalName.isEmpty) {
-                          return;
-                        }
-
-                        widget.onGoalChanged(
-                          GoalEntry(
-                            name: goalName,
-                            date: _dateOnly(_selectedGoalDate),
-                          ),
-                        );
-                      },
-                      child: const Text('Save goal'),
-                    ),
-                    const SizedBox(width: 12),
-                    if (widget.goal != null)
-                      TextButton(
-                        key: const Key('clear-goal-button'),
-                        onPressed: () {
-                          _goalNameController.clear();
                           setState(() {
-                            _selectedGoalDate = _clampDateToCycle(
-                              widget.today,
-                              widget.cycle,
-                            );
+                            _selectedGoalDate = _dateOnly(pickedDate);
                           });
-                          widget.onGoalChanged(null);
-                        },
-                        child: const Text('Clear goal'),
-                      ),
-                  ],
-                ),
-                if (widget.goal != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    'Current goal: ${widget.goal!.name} on ${_formatDate(widget.goal!.date)}',
-                    key: const Key('current-goal-summary'),
+                        }
+                      },
+                      child: const Text('Select goal date'),
+                    ),
                   ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      FilledButton(
+                        key: const Key('save-goal-button'),
+                        onPressed: () {
+                          final goalName = _goalNameController.text.trim();
+
+                          if (goalName.isEmpty) {
+                            return;
+                          }
+
+                          widget.onGoalChanged(
+                            GoalEntry(
+                              name: goalName,
+                              date: _dateOnly(_selectedGoalDate),
+                            ),
+                          );
+                        },
+                        child: const Text('Save goal'),
+                      ),
+                      const SizedBox(width: 12),
+                      if (widget.goal != null)
+                        TextButton(
+                          key: const Key('clear-goal-button'),
+                          onPressed: () {
+                            _goalNameController.clear();
+                            setState(() {
+                              _selectedGoalDate = _clampDateToCycle(
+                                widget.today,
+                                widget.cycle,
+                              );
+                            });
+                            widget.onGoalChanged(null);
+                          },
+                          child: const Text('Clear goal'),
+                        ),
+                    ],
+                  ),
+                  if (widget.goal != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'Current goal: ${widget.goal!.name} on ${_formatDate(widget.goal!.date)}',
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
