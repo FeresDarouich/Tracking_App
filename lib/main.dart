@@ -25,6 +25,17 @@ const _monthNames = <String>[
 
 const _weekdayLabels = <String>['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 
+const _goalAccentPalette = <Color>[
+  Color(0xFFFFD60A),
+  Color(0xFF5AC8FA),
+  Color(0xFFFF9F0A),
+  Color(0xFFBF5AF2),
+  Color(0xFF64D2FF),
+  Color(0xFF30D158),
+  Color(0xFFFF375F),
+  Color(0xFF00C7BE),
+];
+
 enum YearStartMode { normal, custom }
 
 class GoalEntry {
@@ -615,6 +626,7 @@ class _GoalProgressCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final goalProgress = _goalCompletionRate(now, cycleStart, goal.date);
     final goalStatusLabel = _goalStatusLabel(now, goal);
+    final accentColor = _goalAccentColor(goal);
 
     return Card(
       key: addTestKeys ? const Key('goal-progress-card') : null,
@@ -644,7 +656,7 @@ class _GoalProgressCard extends StatelessWidget {
                   key: addTestKeys ? const Key('goal-progress-bar') : null,
                   value: animatedGoalProgress,
                   minHeight: 18,
-                  color: const Color(0xFFFFD60A),
+                  color: accentColor,
                   backgroundColor: const Color(0xFF4A4A4A),
                   borderRadius: BorderRadius.circular(999),
                 ),
@@ -653,7 +665,7 @@ class _GoalProgressCard extends StatelessWidget {
                   '${(animatedGoalProgress * 100).toStringAsFixed(1)}%',
                   key: addTestKeys ? const Key('goal-progress-label') : null,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: const Color(0xFFFFD60A),
+                    color: accentColor,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -1223,10 +1235,13 @@ class _MonthCard extends StatelessWidget {
               final isGoalDate =
                   isInCycle &&
                   day != null &&
-                  goals.any(
-                    (goal) =>
-                        _dateOnly(goal.date) == DateTime(year, month, day),
-                  );
+                  _goalForDate(goals, DateTime(year, month, day)) != null;
+              final goalForDay = day == null
+                  ? null
+                  : _goalForDate(goals, DateTime(year, month, day));
+              final goalAccentColor = goalForDay == null
+                  ? null
+                  : _goalAccentColor(goalForDay);
               final isPastDay =
                   isInCycle &&
                   cellDate != null &&
@@ -1246,7 +1261,7 @@ class _MonthCard extends StatelessWidget {
                         : !isInCycle
                         ? Colors.transparent
                         : isGoalDate
-                        ? const Color(0xFFFFD60A).withValues(alpha: 0.28)
+                        ? goalAccentColor!.withValues(alpha: 0.28)
                         : isToday
                         ? const Color(0xFF00FF38).withValues(alpha: 0.2)
                         : isPastDay
@@ -1258,7 +1273,7 @@ class _MonthCard extends StatelessWidget {
                           : !isInCycle
                           ? Colors.transparent
                           : isGoalDate
-                          ? const Color(0xFFFFD60A)
+                          ? goalAccentColor!
                           : isToday
                           ? const Color(0xFF00FF38)
                           : isPastDay
@@ -1497,4 +1512,24 @@ bool _goalsEqual(List<GoalEntry> a, List<GoalEntry> b) {
 
 String _formatDate(DateTime date) {
   return '${_monthNames[date.month - 1]} ${date.day}, ${date.year}';
+}
+
+Color _goalAccentColor(GoalEntry goal) {
+  final paletteIndex =
+      (goal.name.toLowerCase().hashCode ^ goal.date.toIso8601String().hashCode)
+          .abs() %
+      _goalAccentPalette.length;
+  return _goalAccentPalette[paletteIndex];
+}
+
+GoalEntry? _goalForDate(List<GoalEntry> goals, DateTime date) {
+  final normalizedDate = _dateOnly(date);
+
+  for (final goal in goals) {
+    if (_dateOnly(goal.date) == normalizedDate) {
+      return goal;
+    }
+  }
+
+  return null;
 }
