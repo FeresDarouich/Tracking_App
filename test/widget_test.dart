@@ -119,9 +119,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Year Start'), findsOneWidget);
+    await tester.tap(find.text('Year Start').last);
+    await tester.pumpAndSettle();
+
     expect(find.byKey(const Key('custom-year-start-option')), findsOneWidget);
     expect(find.text('Select date'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
     expect(find.text('Goal'), findsOneWidget);
+    await tester.tap(find.text('Goal').last);
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('goal-name-field')), findsOneWidget);
     expect(find.text('Select goal date'), findsOneWidget);
   });
@@ -183,10 +191,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('current-goal-summary')), findsOneWidget);
-    expect(
-      find.text('Current goal: Launch MVP on August 15, 2026'),
-      findsOneWidget,
-    );
+    expect(find.text('1 goal configured'), findsOneWidget);
   });
 
   testWidgets('persists the saved goal after reopening the app', (
@@ -201,10 +206,17 @@ void main() {
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byKey(const Key('goal-name-field')), goalName);
-    await tester.ensureVisible(find.byKey(const Key('save-goal-button')));
+    await tester.tap(find.text('Goal').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('save-goal-button')));
+
+    await tester.enterText(find.byKey(const Key('goal-name-field')), goalName);
+    await tester.ensureVisible(find.byKey(const Key('add-goal-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('add-goal-button')));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(const Key('save-goals-button')));
+    await tester.tap(find.byKey(const Key('save-goals-button')));
     await tester.pumpAndSettle();
 
     await tester.pumpWidget(const SizedBox.shrink());

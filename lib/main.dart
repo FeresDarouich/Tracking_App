@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -69,15 +70,16 @@ class YearCycleRange {
 }
 
 class PersistedAppState {
-  const PersistedAppState({required this.settings, required this.goal});
+  const PersistedAppState({required this.settings, required this.goals});
 
   final YearCycleSettings settings;
-  final GoalEntry? goal;
+  final List<GoalEntry> goals;
 }
 
 class AppStorage {
   static const _yearStartModeKey = 'year_start_mode';
   static const _customStartKey = 'custom_start_date';
+  static const _goalsKey = 'goals_v2';
   static const _goalNameKey = 'goal_name';
   static const _goalDateKey = 'goal_date';
 
@@ -85,6 +87,7 @@ class AppStorage {
     final preferences = await SharedPreferences.getInstance();
     final modeName = preferences.getString(_yearStartModeKey);
     final customStartValue = preferences.getString(_customStartKey);
+    final goalsPayload = preferences.getString(_goalsKey);
     final goalName = preferences.getString(_goalNameKey);
     final goalDateValue = preferences.getString(_goalDateKey);
 
@@ -98,23 +101,52 @@ class AppStorage {
     final customStart = customStartValue == null
         ? null
         : DateTime.tryParse(customStartValue);
-    final goalDate = goalDateValue == null
-        ? null
-        : DateTime.tryParse(goalDateValue);
+    final goals = <GoalEntry>[];
+    if (goalsPayload != null) {
+      try {
+        final decoded = jsonDecode(goalsPayload);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is Map<String, dynamic>) {
+              final name = item['name'];
+              final dateValue = item['date'];
+              if (name is String && dateValue is String) {
+                final parsedDate = DateTime.tryParse(dateValue);
+                final trimmedName = name.trim();
+                if (parsedDate != null && trimmedName.isNotEmpty) {
+                  goals.add(
+                    GoalEntry(name: trimmedName, date: _dateOnly(parsedDate)),
+                  );
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {
+        // Fall back to legacy keys when v2 payload is malformed.
+      }
+    }
+
+    if (goals.isEmpty) {
+      final goalDate = goalDateValue == null
+          ? null
+          : DateTime.tryParse(goalDateValue);
+      if (goalName != null && goalName.trim().isNotEmpty && goalDate != null) {
+        goals.add(GoalEntry(name: goalName.trim(), date: _dateOnly(goalDate)));
+      }
+    }
 
     return PersistedAppState(
       settings: mode == YearStartMode.custom && customStart != null
           ? YearCycleSettings.custom(customStart: _dateOnly(customStart))
           : const YearCycleSettings.normal(),
-      goal: goalName == null || goalName.trim().isEmpty || goalDate == null
-          ? null
-          : GoalEntry(name: goalName.trim(), date: _dateOnly(goalDate)),
+      goals: goals,
     );
   }
 
   static Future<void> save({
     required YearCycleSettings settings,
-    required GoalEntry? goal,
+    required List<GoalEntry> goals,
   }) async {
     final preferences = await SharedPreferences.getInstance();
 
@@ -128,16 +160,31 @@ class AppStorage {
       );
     }
 
-    if (goal == null || goal.name.trim().isEmpty) {
+    if (goals.isEmpty) {
+      await preferences.remove(_goalsKey);
       await preferences.remove(_goalNameKey);
       await preferences.remove(_goalDateKey);
       return;
     }
 
-    await preferences.setString(_goalNameKey, goal.name.trim());
+    final payload = jsonEncode(
+      goals
+          .map(
+            (goal) => <String, String>{
+              'name': goal.name.trim(),
+              'date': _dateOnly(goal.date).toIso8601String(),
+            },
+          )
+          .toList(),
+    );
+    await preferences.setString(_goalsKey, payload);
+
+    // Keep legacy single-goal keys in sync with the first goal for compatibility.
+    final firstGoal = goals.first;
+    await preferences.setString(_goalNameKey, firstGoal.name.trim());
     await preferences.setString(
       _goalDateKey,
-      _dateOnly(goal.date).toIso8601String(),
+      _dateOnly(firstGoal.date).toIso8601String(),
     );
   }
 }
@@ -176,13 +223,16 @@ class AppShell extends StatefulWidget {
     DateTime? today,
     YearCycleSettings? initialSettings,
     GoalEntry? initialGoal,
+    List<GoalEntry>? initialGoals,
   }) : _today = today,
        _initialSettings = initialSettings,
-       _initialGoal = initialGoal;
+       _initialGoal = initialGoal,
+       _initialGoals = initialGoals;
 
   final DateTime? _today;
   final YearCycleSettings? _initialSettings;
   final GoalEntry? _initialGoal;
+  final List<GoalEntry>? _initialGoals;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -193,15 +243,20 @@ class _AppShellState extends State<AppShell> {
   int _progressPageVersion = 0;
   int _calendarPageVersion = 0;
   late YearCycleSettings _settings;
-  GoalEntry? _goal;
+  late List<GoalEntry> _goals;
 
   @override
   void initState() {
     super.initState();
     _settings = widget._initialSettings ?? const YearCycleSettings.normal();
-    _goal = widget._initialGoal;
+    _goals = List<GoalEntry>.from(
+      widget._initialGoals ??
+          (widget._initialGoal == null ? const [] : [widget._initialGoal!]),
+    );
 
-    if (widget._initialSettings == null && widget._initialGoal == null) {
+    if (widget._initialSettings == null &&
+        widget._initialGoals == null &&
+        widget._initialGoal == null) {
       unawaited(_loadPersistedState());
     }
   }
@@ -211,7 +266,7 @@ class _AppShellState extends State<AppShell> {
   Future<void> _loadPersistedState() async {
     final persistedState = await AppStorage.load();
     final cycle = _resolveYearCycle(_currentToday, persistedState.settings);
-    final sanitizedGoal = _sanitizeGoal(persistedState.goal, cycle);
+    final sanitizedGoals = _sanitizeGoals(persistedState.goals, cycle);
 
     if (!mounted) {
       return;
@@ -219,21 +274,21 @@ class _AppShellState extends State<AppShell> {
 
     setState(() {
       _settings = persistedState.settings;
-      _goal = sanitizedGoal;
+      _goals = sanitizedGoals;
       _progressPageVersion++;
       _calendarPageVersion++;
     });
 
-    if (sanitizedGoal != persistedState.goal) {
+    if (!_goalsEqual(sanitizedGoals, persistedState.goals)) {
       unawaited(_persistState());
     }
   }
 
   Future<void> _persistState() {
     final cycle = _resolveYearCycle(_currentToday, _settings);
-    final sanitizedGoal = _sanitizeGoal(_goal, cycle);
+    final sanitizedGoals = _sanitizeGoals(_goals, cycle);
 
-    return AppStorage.save(settings: _settings, goal: sanitizedGoal);
+    return AppStorage.save(settings: _settings, goals: sanitizedGoals);
   }
 
   void _updateYearStartMode(YearStartMode mode) {
@@ -246,7 +301,7 @@ class _AppShellState extends State<AppShell> {
             ? _dateOnly(_settings.customStart ?? today)
             : _settings.customStart,
       );
-      _goal = _sanitizeGoal(_goal, _resolveYearCycle(today, _settings));
+      _goals = _sanitizeGoals(_goals, _resolveYearCycle(today, _settings));
       _progressPageVersion++;
       _calendarPageVersion++;
     });
@@ -260,7 +315,10 @@ class _AppShellState extends State<AppShell> {
         mode: YearStartMode.custom,
         customStart: _dateOnly(customStart),
       );
-      _goal = _sanitizeGoal(_goal, _resolveYearCycle(_currentToday, _settings));
+      _goals = _sanitizeGoals(
+        _goals,
+        _resolveYearCycle(_currentToday, _settings),
+      );
       _progressPageVersion++;
       _calendarPageVersion++;
     });
@@ -268,9 +326,12 @@ class _AppShellState extends State<AppShell> {
     unawaited(_persistState());
   }
 
-  void _updateGoal(GoalEntry? goal) {
+  void _updateGoals(List<GoalEntry> goals) {
     setState(() {
-      _goal = _sanitizeGoal(goal, _resolveYearCycle(_currentToday, _settings));
+      _goals = _sanitizeGoals(
+        goals,
+        _resolveYearCycle(_currentToday, _settings),
+      );
       _progressPageVersion++;
       _calendarPageVersion++;
     });
@@ -288,22 +349,22 @@ class _AppShellState extends State<AppShell> {
         today: today,
         settings: _settings,
         cycle: cycle,
-        goal: _goal,
+        goals: _goals,
       ),
       YearCalendarPage(
         key: ValueKey(_calendarPageVersion),
         today: today,
         cycle: cycle,
-        goal: _goal,
+        goals: _goals,
       ),
       SettingsPage(
         today: today,
         settings: _settings,
         cycle: cycle,
-        goal: _goal,
+        goals: _goals,
         onModeChanged: _updateYearStartMode,
         onCustomStartChanged: _updateCustomStart,
-        onGoalChanged: _updateGoal,
+        onGoalsChanged: _updateGoals,
       ),
     ];
     final titles = ['Year Completion', 'Year Calendar', 'Settings'];
@@ -352,13 +413,13 @@ class YearProgressPage extends StatefulWidget {
     DateTime? today,
     required this.settings,
     required this.cycle,
-    required this.goal,
+    required this.goals,
   }) : _today = today;
 
   final DateTime? _today;
   final YearCycleSettings settings;
   final YearCycleRange cycle;
-  final GoalEntry? goal;
+  final List<GoalEntry> goals;
 
   @override
   State<YearProgressPage> createState() => _YearProgressPageState();
@@ -423,12 +484,8 @@ class _YearProgressPageState extends State<YearProgressPage>
         : now.isBefore(widget.cycle.endExclusive)
         ? '$remainingDays days remaining in this cycle.'
         : 'Cycle completed on ${_formatDate(widget.cycle.displayEnd)}.';
-    final goalProgress = widget.goal == null
-        ? null
-        : _goalCompletionRate(now, widget.cycle.start, widget.goal!.date);
-    final goalStatusLabel = widget.goal == null
-        ? null
-        : _goalStatusLabel(now, widget.goal!);
+    final sortedGoals = List<GoalEntry>.from(widget.goals)
+      ..sort((a, b) => a.date.compareTo(b.date));
 
     return Center(
       child: ListView(
@@ -506,72 +563,106 @@ class _YearProgressPageState extends State<YearProgressPage>
               ),
             ),
           ),
-          if (widget.goal != null &&
-              goalProgress != null &&
-              goalStatusLabel != null)
-            const SizedBox(height: 16),
-          if (widget.goal != null &&
-              goalProgress != null &&
-              goalStatusLabel != null)
+          if (sortedGoals.isNotEmpty) const SizedBox(height: 16),
+          if (sortedGoals.isNotEmpty)
             Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
-                child: Card(
-                  key: const Key('goal-progress-card'),
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: AnimatedBuilder(
-                      animation: _controller,
-                      builder: (context, child) {
-                        final animatedGoalProgress = _hasAnimationStarted
-                            ? goalProgress *
-                                  Curves.easeOutCubic.transform(
-                                    _controller.value,
-                                  )
-                            : 0.0;
-
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.goal!.name,
-                              style: Theme.of(context).textTheme.headlineSmall,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Goal date: ${_formatDate(widget.goal!.date)}',
-                              style: Theme.of(context).textTheme.bodyLarge,
-                            ),
-                            const SizedBox(height: 16),
-                            LinearProgressIndicator(
-                              key: const Key('goal-progress-bar'),
-                              value: animatedGoalProgress,
-                              minHeight: 18,
-                              color: const Color(0xFFFFD60A),
-                              backgroundColor: const Color(0xFF4A4A4A),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              '${(animatedGoalProgress * 100).toStringAsFixed(1)}%',
-                              key: const Key('goal-progress-label'),
-                              style: Theme.of(context).textTheme.titleLarge
-                                  ?.copyWith(
-                                    color: const Color(0xFFFFD60A),
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(goalStatusLabel),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
+                child: Column(
+                  children: [
+                    for (var index = 0; index < sortedGoals.length; index++)
+                      Padding(
+                        padding: EdgeInsets.only(
+                          bottom: index == sortedGoals.length - 1 ? 0 : 12,
+                        ),
+                        child: _GoalProgressCard(
+                          goal: sortedGoals[index],
+                          now: now,
+                          cycleStart: widget.cycle.start,
+                          controller: _controller,
+                          hasAnimationStarted: _hasAnimationStarted,
+                          addTestKeys: index == 0,
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _GoalProgressCard extends StatelessWidget {
+  const _GoalProgressCard({
+    required this.goal,
+    required this.now,
+    required this.cycleStart,
+    required this.controller,
+    required this.hasAnimationStarted,
+    required this.addTestKeys,
+  });
+
+  final GoalEntry goal;
+  final DateTime now;
+  final DateTime cycleStart;
+  final AnimationController controller;
+  final bool hasAnimationStarted;
+  final bool addTestKeys;
+
+  @override
+  Widget build(BuildContext context) {
+    final goalProgress = _goalCompletionRate(now, cycleStart, goal.date);
+    final goalStatusLabel = _goalStatusLabel(now, goal);
+
+    return Card(
+      key: addTestKeys ? const Key('goal-progress-card') : null,
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: AnimatedBuilder(
+          animation: controller,
+          builder: (context, child) {
+            final animatedGoalProgress = hasAnimationStarted
+                ? goalProgress * Curves.easeOutCubic.transform(controller.value)
+                : 0.0;
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  goal.name,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Goal date: ${_formatDate(goal.date)}',
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+                const SizedBox(height: 16),
+                LinearProgressIndicator(
+                  key: addTestKeys ? const Key('goal-progress-bar') : null,
+                  value: animatedGoalProgress,
+                  minHeight: 18,
+                  color: const Color(0xFFFFD60A),
+                  backgroundColor: const Color(0xFF4A4A4A),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '${(animatedGoalProgress * 100).toStringAsFixed(1)}%',
+                  key: addTestKeys ? const Key('goal-progress-label') : null,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: const Color(0xFFFFD60A),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(goalStatusLabel),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -582,12 +673,12 @@ class YearCalendarPage extends StatefulWidget {
     super.key,
     required this.today,
     required this.cycle,
-    required this.goal,
+    required this.goals,
   });
 
   final DateTime today;
   final YearCycleRange cycle;
-  final GoalEntry? goal;
+  final List<GoalEntry> goals;
 
   @override
   State<YearCalendarPage> createState() => _YearCalendarPageState();
@@ -651,7 +742,7 @@ class _YearCalendarPageState extends State<YearCalendarPage> {
               year: monthDate.year,
               today: widget.today,
               cycle: widget.cycle,
-              goal: widget.goal,
+              goals: widget.goals,
             ),
           );
         }),
@@ -666,19 +757,19 @@ class SettingsPage extends StatefulWidget {
     required this.today,
     required this.settings,
     required this.cycle,
-    required this.goal,
+    required this.goals,
     required this.onModeChanged,
     required this.onCustomStartChanged,
-    required this.onGoalChanged,
+    required this.onGoalsChanged,
   });
 
   final DateTime today;
   final YearCycleSettings settings;
   final YearCycleRange cycle;
-  final GoalEntry? goal;
+  final List<GoalEntry> goals;
   final ValueChanged<YearStartMode> onModeChanged;
   final ValueChanged<DateTime> onCustomStartChanged;
-  final ValueChanged<GoalEntry?> onGoalChanged;
+  final ValueChanged<List<GoalEntry>> onGoalsChanged;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -731,9 +822,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               subtitle: Text(
-                widget.goal == null
-                    ? 'No goal set'
-                    : '${widget.goal!.name} on ${_formatDate(widget.goal!.date)}',
+                widget.goals.isEmpty
+                    ? 'No goals set'
+                    : '${widget.goals.length} goal${widget.goals.length == 1 ? '' : 's'} configured',
                 key: const Key('current-goal-summary'),
               ),
               trailing: const Icon(Icons.chevron_right),
@@ -743,8 +834,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     builder: (context) => GoalSettingsPage(
                       today: widget.today,
                       cycle: widget.cycle,
-                      goal: widget.goal,
-                      onGoalChanged: widget.onGoalChanged,
+                      goals: widget.goals,
+                      onGoalsChanged: widget.onGoalsChanged,
                     ),
                   ),
                 );
@@ -855,14 +946,14 @@ class GoalSettingsPage extends StatefulWidget {
     super.key,
     required this.today,
     required this.cycle,
-    required this.goal,
-    required this.onGoalChanged,
+    required this.goals,
+    required this.onGoalsChanged,
   });
 
   final DateTime today;
   final YearCycleRange cycle;
-  final GoalEntry? goal;
-  final ValueChanged<GoalEntry?> onGoalChanged;
+  final List<GoalEntry> goals;
+  final ValueChanged<List<GoalEntry>> onGoalsChanged;
 
   @override
   State<GoalSettingsPage> createState() => _GoalSettingsPageState();
@@ -871,29 +962,26 @@ class GoalSettingsPage extends StatefulWidget {
 class _GoalSettingsPageState extends State<GoalSettingsPage> {
   late final TextEditingController _goalNameController;
   late DateTime _selectedGoalDate;
+  late List<GoalEntry> _draftGoals;
 
   @override
   void initState() {
     super.initState();
-    _goalNameController = TextEditingController(text: widget.goal?.name ?? '');
-    _selectedGoalDate = _dateOnly(
-      widget.goal?.date ?? _clampDateToCycle(widget.today, widget.cycle),
-    );
+    _goalNameController = TextEditingController();
+    _selectedGoalDate = _clampDateToCycle(widget.today, widget.cycle);
+    _draftGoals = List<GoalEntry>.from(widget.goals);
   }
 
   @override
   void didUpdateWidget(covariant GoalSettingsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    if (oldWidget.goal?.name != widget.goal?.name) {
-      _goalNameController.text = widget.goal?.name ?? '';
-    }
-
-    if (oldWidget.goal?.date != widget.goal?.date ||
+    if (!_goalsEqual(oldWidget.goals, widget.goals) ||
         oldWidget.cycle.start != widget.cycle.start ||
         oldWidget.cycle.displayEnd != widget.cycle.displayEnd) {
-      final fallbackDate = _clampDateToCycle(widget.today, widget.cycle);
-      _selectedGoalDate = _dateOnly(widget.goal?.date ?? fallbackDate);
+      final cycle = widget.cycle;
+      _draftGoals = _sanitizeGoals(widget.goals, cycle);
+      _selectedGoalDate = _clampDateToCycle(widget.today, cycle);
     }
   }
 
@@ -905,6 +993,9 @@ class _GoalSettingsPageState extends State<GoalSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final sortedDraftGoals = List<GoalEntry>.from(_draftGoals)
+      ..sort((a, b) => a.date.compareTo(b.date));
+
     return Scaffold(
       appBar: AppBar(title: const Text('Goal')),
       body: ListView(
@@ -917,7 +1008,7 @@ class _GoalSettingsPageState extends State<GoalSettingsPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Create one goal with a name and a date. That date will be highlighted in the calendar and tracked on the progress page.',
+                    'Add one or more goals with a name and date. New goals are staged with + and only saved when you tap Save changes.',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 16),
@@ -932,7 +1023,7 @@ class _GoalSettingsPageState extends State<GoalSettingsPage> {
                   const SizedBox(height: 16),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Goal date'),
+                    title: const Text('New goal date'),
                     subtitle: Text(_formatDate(_selectedGoalDate)),
                     trailing: FilledButton.tonal(
                       onPressed: () async {
@@ -956,7 +1047,7 @@ class _GoalSettingsPageState extends State<GoalSettingsPage> {
                   Row(
                     children: [
                       FilledButton(
-                        key: const Key('save-goal-button'),
+                        key: const Key('add-goal-button'),
                         onPressed: () {
                           final goalName = _goalNameController.text.trim();
 
@@ -964,39 +1055,78 @@ class _GoalSettingsPageState extends State<GoalSettingsPage> {
                             return;
                           }
 
-                          widget.onGoalChanged(
-                            GoalEntry(
-                              name: goalName,
-                              date: _dateOnly(_selectedGoalDate),
-                            ),
-                          );
+                          setState(() {
+                            _draftGoals = [
+                              ..._draftGoals,
+                              GoalEntry(
+                                name: goalName,
+                                date: _dateOnly(_selectedGoalDate),
+                              ),
+                            ];
+                            _goalNameController.clear();
+                            _selectedGoalDate = _clampDateToCycle(
+                              widget.today,
+                              widget.cycle,
+                            );
+                          });
                         },
-                        child: const Text('Save goal'),
+                        child: const Icon(Icons.add),
                       ),
                       const SizedBox(width: 12),
-                      if (widget.goal != null)
+                      if (_draftGoals.isNotEmpty)
                         TextButton(
-                          key: const Key('clear-goal-button'),
+                          key: const Key('clear-goals-button'),
                           onPressed: () {
-                            _goalNameController.clear();
                             setState(() {
-                              _selectedGoalDate = _clampDateToCycle(
-                                widget.today,
-                                widget.cycle,
-                              );
+                              _draftGoals = <GoalEntry>[];
                             });
-                            widget.onGoalChanged(null);
                           },
-                          child: const Text('Clear goal'),
+                          child: const Text('Clear all'),
                         ),
                     ],
                   ),
-                  if (widget.goal != null) ...[
+                  if (sortedDraftGoals.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     Text(
-                      'Current goal: ${widget.goal!.name} on ${_formatDate(widget.goal!.date)}',
+                      'Staged goals',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    ...sortedDraftGoals.map(
+                      (goal) => ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(goal.name),
+                        subtitle: Text(_formatDate(goal.date)),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () {
+                            setState(() {
+                              _draftGoals = _removeFirstMatchingGoal(
+                                _draftGoals,
+                                goal,
+                              );
+                            });
+                          },
+                        ),
+                      ),
                     ),
                   ],
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      key: const Key('save-goals-button'),
+                      onPressed: () {
+                        final sanitizedGoals = _sanitizeGoals(
+                          _draftGoals,
+                          widget.cycle,
+                        );
+                        widget.onGoalsChanged(sanitizedGoals);
+                        Navigator.of(context).pop();
+                      },
+                      child: const Text('Save changes'),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1013,14 +1143,14 @@ class _MonthCard extends StatelessWidget {
     required this.year,
     required this.today,
     required this.cycle,
-    required this.goal,
+    required this.goals,
   });
 
   final int month;
   final int year;
   final DateTime today;
   final YearCycleRange cycle;
-  final GoalEntry? goal;
+  final List<GoalEntry> goals;
 
   @override
   Widget build(BuildContext context) {
@@ -1093,8 +1223,10 @@ class _MonthCard extends StatelessWidget {
               final isGoalDate =
                   isInCycle &&
                   day != null &&
-                  goal != null &&
-                  _dateOnly(goal!.date) == DateTime(year, month, day);
+                  goals.any(
+                    (goal) =>
+                        _dateOnly(goal.date) == DateTime(year, month, day),
+                  );
               final isPastDay =
                   isInCycle &&
                   cellDate != null &&
@@ -1296,18 +1428,71 @@ DateTime _clampDateToCycle(DateTime date, YearCycleRange cycle) {
   return normalizedDate;
 }
 
-GoalEntry? _sanitizeGoal(GoalEntry? goal, YearCycleRange cycle) {
-  if (goal == null) {
-    return null;
+List<GoalEntry> _sanitizeGoals(List<GoalEntry> goals, YearCycleRange cycle) {
+  final sanitizedGoals = <GoalEntry>[];
+  final seenKeys = <String>{};
+
+  for (final goal in goals) {
+    final trimmedName = goal.name.trim();
+    final normalizedDate = _dateOnly(goal.date);
+    if (trimmedName.isEmpty) {
+      continue;
+    }
+
+    if (normalizedDate.isBefore(_dateOnly(cycle.start)) ||
+        normalizedDate.isAfter(_dateOnly(cycle.displayEnd))) {
+      continue;
+    }
+
+    final dedupeKey =
+        '${trimmedName.toLowerCase()}-${normalizedDate.toIso8601String()}';
+    if (seenKeys.contains(dedupeKey)) {
+      continue;
+    }
+
+    seenKeys.add(dedupeKey);
+    sanitizedGoals.add(goal.copyWith(name: trimmedName, date: normalizedDate));
   }
 
-  final normalizedDate = _dateOnly(goal.date);
-  if (normalizedDate.isBefore(_dateOnly(cycle.start)) ||
-      normalizedDate.isAfter(_dateOnly(cycle.displayEnd))) {
-    return null;
+  sanitizedGoals.sort((a, b) => a.date.compareTo(b.date));
+  return sanitizedGoals;
+}
+
+List<GoalEntry> _removeFirstMatchingGoal(
+  List<GoalEntry> goals,
+  GoalEntry target,
+) {
+  var removed = false;
+  final updatedGoals = <GoalEntry>[];
+
+  for (final goal in goals) {
+    final isMatch =
+        !removed &&
+        goal.name == target.name &&
+        _dateOnly(goal.date) == _dateOnly(target.date);
+    if (isMatch) {
+      removed = true;
+      continue;
+    }
+    updatedGoals.add(goal);
   }
 
-  return goal.copyWith(date: normalizedDate, name: goal.name.trim());
+  return updatedGoals;
+}
+
+bool _goalsEqual(List<GoalEntry> a, List<GoalEntry> b) {
+  if (a.length != b.length) {
+    return false;
+  }
+
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].name != b[i].name ||
+        _dateOnly(a[i].date) != _dateOnly(b[i].date)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 String _formatDate(DateTime date) {
