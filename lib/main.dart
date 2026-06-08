@@ -49,6 +49,56 @@ class GoalEntry {
   }
 }
 
+class TodoNoteEntry {
+  const TodoNoteEntry({
+    required this.id,
+    required this.title,
+    required this.completed,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String title;
+  final bool completed;
+  final DateTime createdAt;
+
+  TodoNoteEntry copyWith({
+    String? title,
+    bool? completed,
+    DateTime? createdAt,
+  }) {
+    return TodoNoteEntry(
+      id: id,
+      title: title ?? this.title,
+      completed: completed ?? this.completed,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+}
+
+class ExpenseEntry {
+  const ExpenseEntry({
+    required this.id,
+    required this.title,
+    required this.amount,
+    required this.date,
+  });
+
+  final String id;
+  final String title;
+  final double amount;
+  final DateTime date;
+
+  ExpenseEntry copyWith({String? title, double? amount, DateTime? date}) {
+    return ExpenseEntry(
+      id: id,
+      title: title ?? this.title,
+      amount: amount ?? this.amount,
+      date: date ?? this.date,
+    );
+  }
+}
+
 class YearCycleSettings {
   const YearCycleSettings._({required this.mode, this.customStart});
 
@@ -81,16 +131,25 @@ class YearCycleRange {
 }
 
 class PersistedAppState {
-  const PersistedAppState({required this.settings, required this.goals});
+  const PersistedAppState({
+    required this.settings,
+    required this.goals,
+    required this.todoNotes,
+    required this.expenses,
+  });
 
   final YearCycleSettings settings;
   final List<GoalEntry> goals;
+  final List<TodoNoteEntry> todoNotes;
+  final List<ExpenseEntry> expenses;
 }
 
 class AppStorage {
   static const _yearStartModeKey = 'year_start_mode';
   static const _customStartKey = 'custom_start_date';
   static const _goalsKey = 'goals_v2';
+  static const _todoNotesKey = 'todo_notes_v1';
+  static const _expenseEntriesKey = 'expense_entries_v1';
   static const _goalNameKey = 'goal_name';
   static const _goalDateKey = 'goal_date';
 
@@ -99,6 +158,8 @@ class AppStorage {
     final modeName = preferences.getString(_yearStartModeKey);
     final customStartValue = preferences.getString(_customStartKey);
     final goalsPayload = preferences.getString(_goalsKey);
+    final todoNotesPayload = preferences.getString(_todoNotesKey);
+    final expensesPayload = preferences.getString(_expenseEntriesKey);
     final goalName = preferences.getString(_goalNameKey);
     final goalDateValue = preferences.getString(_goalDateKey);
 
@@ -147,17 +208,24 @@ class AppStorage {
       }
     }
 
+    final todoNotes = _decodeTodoNotes(todoNotesPayload);
+    final expenses = _decodeExpenses(expensesPayload);
+
     return PersistedAppState(
       settings: mode == YearStartMode.custom && customStart != null
           ? YearCycleSettings.custom(customStart: _dateOnly(customStart))
           : const YearCycleSettings.normal(),
       goals: goals,
+      todoNotes: todoNotes,
+      expenses: expenses,
     );
   }
 
   static Future<void> save({
     required YearCycleSettings settings,
     required List<GoalEntry> goals,
+    required List<TodoNoteEntry> todoNotes,
+    required List<ExpenseEntry> expenses,
   }) async {
     final preferences = await SharedPreferences.getInstance();
 
@@ -175,27 +243,58 @@ class AppStorage {
       await preferences.remove(_goalsKey);
       await preferences.remove(_goalNameKey);
       await preferences.remove(_goalDateKey);
-      return;
+    } else {
+      final payload = jsonEncode(
+        goals
+            .map(
+              (goal) => <String, String>{
+                'name': goal.name.trim(),
+                'date': _dateOnly(goal.date).toIso8601String(),
+              },
+            )
+            .toList(),
+      );
+      await preferences.setString(_goalsKey, payload);
+
+      // Keep legacy single-goal keys in sync with the first goal for compatibility.
+      final firstGoal = goals.first;
+      await preferences.setString(_goalNameKey, firstGoal.name.trim());
+      await preferences.setString(
+        _goalDateKey,
+        _dateOnly(firstGoal.date).toIso8601String(),
+      );
     }
 
-    final payload = jsonEncode(
-      goals
-          .map(
-            (goal) => <String, String>{
-              'name': goal.name.trim(),
-              'date': _dateOnly(goal.date).toIso8601String(),
-            },
-          )
-          .toList(),
-    );
-    await preferences.setString(_goalsKey, payload);
-
-    // Keep legacy single-goal keys in sync with the first goal for compatibility.
-    final firstGoal = goals.first;
-    await preferences.setString(_goalNameKey, firstGoal.name.trim());
     await preferences.setString(
-      _goalDateKey,
-      _dateOnly(firstGoal.date).toIso8601String(),
+      _todoNotesKey,
+      jsonEncode(
+        todoNotes
+            .map(
+              (note) => <String, Object>{
+                'id': note.id,
+                'title': note.title.trim(),
+                'completed': note.completed,
+                'createdAt': note.createdAt.toIso8601String(),
+              },
+            )
+            .toList(),
+      ),
+    );
+
+    await preferences.setString(
+      _expenseEntriesKey,
+      jsonEncode(
+        expenses
+            .map(
+              (expense) => <String, Object>{
+                'id': expense.id,
+                'title': expense.title.trim(),
+                'amount': expense.amount,
+                'date': _dateOnly(expense.date).toIso8601String(),
+              },
+            )
+            .toList(),
+      ),
     );
   }
 }
@@ -235,15 +334,21 @@ class AppShell extends StatefulWidget {
     YearCycleSettings? initialSettings,
     GoalEntry? initialGoal,
     List<GoalEntry>? initialGoals,
+    List<TodoNoteEntry>? initialTodoNotes,
+    List<ExpenseEntry>? initialExpenses,
   }) : _today = today,
        _initialSettings = initialSettings,
        _initialGoal = initialGoal,
-       _initialGoals = initialGoals;
+       _initialGoals = initialGoals,
+       _initialTodoNotes = initialTodoNotes,
+       _initialExpenses = initialExpenses;
 
   final DateTime? _today;
   final YearCycleSettings? _initialSettings;
   final GoalEntry? _initialGoal;
   final List<GoalEntry>? _initialGoals;
+  final List<TodoNoteEntry>? _initialTodoNotes;
+  final List<ExpenseEntry>? _initialExpenses;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -255,6 +360,8 @@ class _AppShellState extends State<AppShell> {
   int _calendarPageVersion = 0;
   late YearCycleSettings _settings;
   late List<GoalEntry> _goals;
+  late List<TodoNoteEntry> _todoNotes;
+  late List<ExpenseEntry> _expenses;
 
   @override
   void initState() {
@@ -264,10 +371,14 @@ class _AppShellState extends State<AppShell> {
       widget._initialGoals ??
           (widget._initialGoal == null ? const [] : [widget._initialGoal!]),
     );
+    _todoNotes = List<TodoNoteEntry>.from(widget._initialTodoNotes ?? const []);
+    _expenses = List<ExpenseEntry>.from(widget._initialExpenses ?? const []);
 
     if (widget._initialSettings == null &&
         widget._initialGoals == null &&
-        widget._initialGoal == null) {
+        widget._initialGoal == null &&
+        widget._initialTodoNotes == null &&
+        widget._initialExpenses == null) {
       unawaited(_loadPersistedState());
     }
   }
@@ -278,6 +389,8 @@ class _AppShellState extends State<AppShell> {
     final persistedState = await AppStorage.load();
     final cycle = _resolveYearCycle(_currentToday, persistedState.settings);
     final sanitizedGoals = _sanitizeGoals(persistedState.goals, cycle);
+    final sanitizedTodoNotes = _sanitizeTodoNotes(persistedState.todoNotes);
+    final sanitizedExpenses = _sanitizeExpenses(persistedState.expenses);
 
     if (!mounted) {
       return;
@@ -286,6 +399,8 @@ class _AppShellState extends State<AppShell> {
     setState(() {
       _settings = persistedState.settings;
       _goals = sanitizedGoals;
+      _todoNotes = sanitizedTodoNotes;
+      _expenses = sanitizedExpenses;
       _progressPageVersion++;
       _calendarPageVersion++;
     });
@@ -298,8 +413,15 @@ class _AppShellState extends State<AppShell> {
   Future<void> _persistState() {
     final cycle = _resolveYearCycle(_currentToday, _settings);
     final sanitizedGoals = _sanitizeGoals(_goals, cycle);
+    final sanitizedTodoNotes = _sanitizeTodoNotes(_todoNotes);
+    final sanitizedExpenses = _sanitizeExpenses(_expenses);
 
-    return AppStorage.save(settings: _settings, goals: sanitizedGoals);
+    return AppStorage.save(
+      settings: _settings,
+      goals: sanitizedGoals,
+      todoNotes: sanitizedTodoNotes,
+      expenses: sanitizedExpenses,
+    );
   }
 
   void _updateYearStartMode(YearStartMode mode) {
@@ -350,6 +472,22 @@ class _AppShellState extends State<AppShell> {
     unawaited(_persistState());
   }
 
+  void _updateTodoNotes(List<TodoNoteEntry> notes) {
+    setState(() {
+      _todoNotes = _sanitizeTodoNotes(notes);
+    });
+
+    unawaited(_persistState());
+  }
+
+  void _updateExpenses(List<ExpenseEntry> expenses) {
+    setState(() {
+      _expenses = _sanitizeExpenses(expenses);
+    });
+
+    unawaited(_persistState());
+  }
+
   @override
   Widget build(BuildContext context) {
     final today = _currentToday;
@@ -382,6 +520,114 @@ class _AppShellState extends State<AppShell> {
 
     return Scaffold(
       appBar: AppBar(title: Text(titles[_selectedIndex])),
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            DrawerHeader(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF00FF38), Color(0xFF111111)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: Text(
+                  'Tracking App',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Text('Main'),
+            ),
+            _DrawerDestinationTile(
+              icon: Icons.insights_outlined,
+              selectedIcon: Icons.insights,
+              label: 'Progress',
+              selected: _selectedIndex == 0,
+              onTap: () {
+                Navigator.of(context).pop();
+                setState(() {
+                  _progressPageVersion++;
+                  _selectedIndex = 0;
+                });
+              },
+            ),
+            _DrawerDestinationTile(
+              icon: Icons.calendar_month_outlined,
+              selectedIcon: Icons.calendar_month,
+              label: 'Calendar',
+              selected: _selectedIndex == 1,
+              onTap: () {
+                Navigator.of(context).pop();
+                setState(() {
+                  _calendarPageVersion++;
+                  _selectedIndex = 1;
+                });
+              },
+            ),
+            _DrawerDestinationTile(
+              icon: Icons.settings_outlined,
+              selectedIcon: Icons.settings,
+              label: 'Settings',
+              selected: _selectedIndex == 2,
+              onTap: () {
+                Navigator.of(context).pop();
+                setState(() {
+                  _selectedIndex = 2;
+                });
+              },
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Text('Tools'),
+            ),
+            _DrawerDestinationTile(
+              icon: Icons.checklist_outlined,
+              selectedIcon: Icons.checklist,
+              label: 'Todo notes',
+              selected: false,
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) => TodoNotesPage(
+                      today: today,
+                      notes: _todoNotes,
+                      onNotesChanged: _updateTodoNotes,
+                    ),
+                  ),
+                );
+              },
+            ),
+            _DrawerDestinationTile(
+              icon: Icons.payments_outlined,
+              selectedIcon: Icons.payments,
+              label: 'Money expenses',
+              selected: false,
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) => MoneyExpensesPage(
+                      today: today,
+                      expenses: _expenses,
+                      onExpensesChanged: _updateExpenses,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
@@ -1149,6 +1395,418 @@ class _GoalSettingsPageState extends State<GoalSettingsPage> {
   }
 }
 
+class _DrawerDestinationTile extends StatelessWidget {
+  const _DrawerDestinationTile({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(selected ? selectedIcon : icon),
+      title: Text(label),
+      selected: selected,
+      onTap: onTap,
+    );
+  }
+}
+
+class TodoNotesPage extends StatefulWidget {
+  const TodoNotesPage({
+    super.key,
+    required this.today,
+    required this.notes,
+    required this.onNotesChanged,
+  });
+
+  final DateTime today;
+  final List<TodoNoteEntry> notes;
+  final ValueChanged<List<TodoNoteEntry>> onNotesChanged;
+
+  @override
+  State<TodoNotesPage> createState() => _TodoNotesPageState();
+}
+
+class _TodoNotesPageState extends State<TodoNotesPage> {
+  late List<TodoNoteEntry> _draftNotes;
+
+  @override
+  void initState() {
+    super.initState();
+    _draftNotes = List<TodoNoteEntry>.from(widget.notes);
+  }
+
+  @override
+  void didUpdateWidget(covariant TodoNotesPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (!_todoNotesEqual(oldWidget.notes, widget.notes)) {
+      _draftNotes = List<TodoNoteEntry>.from(widget.notes);
+    }
+  }
+
+  Future<void> _openAddNoteDialog() async {
+    final titleController = TextEditingController();
+
+    final shouldAdd = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('New todo note'),
+          content: TextField(
+            controller: titleController,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Note title',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => Navigator.of(dialogContext).pop(true),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldAdd != true) {
+      titleController.dispose();
+      return;
+    }
+
+    final title = titleController.text.trim();
+    titleController.dispose();
+    if (title.isEmpty) {
+      return;
+    }
+
+    final updatedNotes = [
+      ..._draftNotes,
+      TodoNoteEntry(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        title: title,
+        completed: false,
+        createdAt: widget.today,
+      ),
+    ];
+
+    setState(() {
+      _draftNotes = updatedNotes;
+    });
+    widget.onNotesChanged(_sanitizeTodoNotes(updatedNotes));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final completedCount = _draftNotes.where((note) => note.completed).length;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Todo Notes'),
+        actions: [
+          IconButton(
+            key: const Key('add-todo-note-button'),
+            tooltip: 'Add note',
+            icon: const Icon(Icons.add),
+            onPressed: _openAddNoteDialog,
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'Completed: $completedCount • ${_draftNotes.length} note${_draftNotes.length == 1 ? '' : 's'}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_draftNotes.isNotEmpty)
+            ..._draftNotes.map(
+              (note) => Card(
+                child: CheckboxListTile(
+                  value: note.completed,
+                  title: Text(note.title),
+                  subtitle: Text('Added ${_formatDate(note.createdAt)}'),
+                  secondary: IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () {
+                      final updatedNotes = _draftNotes
+                          .where((item) => item.id != note.id)
+                          .toList();
+                      setState(() {
+                        _draftNotes = updatedNotes;
+                      });
+                      widget.onNotesChanged(_sanitizeTodoNotes(updatedNotes));
+                    },
+                  ),
+                  onChanged: (value) {
+                    final updatedNotes = _draftNotes
+                        .map(
+                          (item) => item.id == note.id
+                              ? item.copyWith(completed: value ?? false)
+                              : item,
+                        )
+                        .toList();
+                    setState(() {
+                      _draftNotes = updatedNotes;
+                    });
+                    widget.onNotesChanged(_sanitizeTodoNotes(updatedNotes));
+                  },
+                ),
+              ),
+            )
+          else
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  'No todo notes yet.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class MoneyExpensesPage extends StatefulWidget {
+  const MoneyExpensesPage({
+    super.key,
+    required this.today,
+    required this.expenses,
+    required this.onExpensesChanged,
+  });
+
+  final DateTime today;
+  final List<ExpenseEntry> expenses;
+  final ValueChanged<List<ExpenseEntry>> onExpensesChanged;
+
+  @override
+  State<MoneyExpensesPage> createState() => _MoneyExpensesPageState();
+}
+
+class _MoneyExpensesPageState extends State<MoneyExpensesPage> {
+  late List<ExpenseEntry> _draftExpenses;
+
+  @override
+  void initState() {
+    super.initState();
+    _draftExpenses = List<ExpenseEntry>.from(widget.expenses);
+  }
+
+  @override
+  void didUpdateWidget(covariant MoneyExpensesPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (!_expensesEqual(oldWidget.expenses, widget.expenses)) {
+      _draftExpenses = List<ExpenseEntry>.from(widget.expenses);
+    }
+  }
+
+  Future<void> _openAddExpenseDialog() async {
+    final titleController = TextEditingController();
+    final amountController = TextEditingController();
+    DateTime selectedDate = _dateOnly(widget.today);
+
+    final shouldAdd = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('New expense'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: titleController,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Expense title',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: amountController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Amount',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Date'),
+                      subtitle: Text(_formatDate(selectedDate)),
+                      trailing: TextButton(
+                        onPressed: () async {
+                          final pickedDate = await showDatePicker(
+                            context: dialogContext,
+                            initialDate: selectedDate,
+                            firstDate: DateTime(2000),
+                            lastDate: DateTime(2100),
+                          );
+
+                          if (pickedDate != null) {
+                            setDialogState(() {
+                              selectedDate = _dateOnly(pickedDate);
+                            });
+                          }
+                        },
+                        child: const Text('Pick date'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Add'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (shouldAdd != true) {
+      titleController.dispose();
+      amountController.dispose();
+      return;
+    }
+
+    final title = titleController.text.trim();
+    final amount = double.tryParse(amountController.text.trim());
+    titleController.dispose();
+    amountController.dispose();
+    if (title.isEmpty || amount == null) {
+      return;
+    }
+
+    final updatedExpenses = [
+      ..._draftExpenses,
+      ExpenseEntry(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        title: title,
+        amount: amount,
+        date: selectedDate,
+      ),
+    ];
+
+    setState(() {
+      _draftExpenses = updatedExpenses;
+    });
+    widget.onExpensesChanged(_sanitizeExpenses(updatedExpenses));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final totalSpent = _draftExpenses.fold<double>(
+      0,
+      (sum, expense) => sum + expense.amount,
+    );
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Money Expenses'),
+        actions: [
+          IconButton(
+            key: const Key('add-expense-button'),
+            tooltip: 'Add expense',
+            icon: const Icon(Icons.add),
+            onPressed: _openAddExpenseDialog,
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'Total: ${totalSpent.toStringAsFixed(2)} • ${_draftExpenses.length} expense${_draftExpenses.length == 1 ? '' : 's'}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (_draftExpenses.isNotEmpty)
+            ..._draftExpenses.map(
+              (expense) => Card(
+                child: ListTile(
+                  title: Text(expense.title),
+                  subtitle: Text(
+                    '${_formatDate(expense.date)} • ${expense.amount.toStringAsFixed(2)}',
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () {
+                      final updatedExpenses = _draftExpenses
+                          .where((item) => item.id != expense.id)
+                          .toList();
+                      setState(() {
+                        _draftExpenses = updatedExpenses;
+                      });
+                      widget.onExpensesChanged(
+                        _sanitizeExpenses(updatedExpenses),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            )
+          else
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  'No expenses tracked yet.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MonthCard extends StatelessWidget {
   const _MonthCard({
     required this.month,
@@ -1473,6 +2131,138 @@ List<GoalEntry> _sanitizeGoals(List<GoalEntry> goals, YearCycleRange cycle) {
   return sanitizedGoals;
 }
 
+List<TodoNoteEntry> _sanitizeTodoNotes(List<TodoNoteEntry> notes) {
+  final sanitizedNotes = <TodoNoteEntry>[];
+  final seenIds = <String>{};
+
+  for (final note in notes) {
+    final trimmedTitle = note.title.trim();
+    if (trimmedTitle.isEmpty || seenIds.contains(note.id)) {
+      continue;
+    }
+
+    seenIds.add(note.id);
+    sanitizedNotes.add(
+      note.copyWith(title: trimmedTitle, createdAt: _dateOnly(note.createdAt)),
+    );
+  }
+
+  return sanitizedNotes;
+}
+
+List<ExpenseEntry> _sanitizeExpenses(List<ExpenseEntry> expenses) {
+  final sanitizedExpenses = <ExpenseEntry>[];
+  final seenIds = <String>{};
+
+  for (final expense in expenses) {
+    final trimmedTitle = expense.title.trim();
+    final normalizedAmount = double.parse(expense.amount.toStringAsFixed(2));
+    if (trimmedTitle.isEmpty ||
+        normalizedAmount <= 0 ||
+        seenIds.contains(expense.id)) {
+      continue;
+    }
+
+    seenIds.add(expense.id);
+    sanitizedExpenses.add(
+      expense.copyWith(
+        title: trimmedTitle,
+        amount: normalizedAmount,
+        date: _dateOnly(expense.date),
+      ),
+    );
+  }
+
+  return sanitizedExpenses;
+}
+
+List<TodoNoteEntry> _decodeTodoNotes(String? payload) {
+  if (payload == null || payload.trim().isEmpty) {
+    return <TodoNoteEntry>[];
+  }
+
+  try {
+    final decoded = jsonDecode(payload);
+    if (decoded is! List) {
+      return <TodoNoteEntry>[];
+    }
+
+    return decoded
+        .whereType<Map>()
+        .map((item) {
+          final id = item['id'];
+          final title = item['title'];
+          final completed = item['completed'];
+          final createdAtValue = item['createdAt'];
+
+          if (id is! String || title is! String || createdAtValue is! String) {
+            return null;
+          }
+
+          final createdAt = DateTime.tryParse(createdAtValue);
+          if (createdAt == null) {
+            return null;
+          }
+
+          return TodoNoteEntry(
+            id: id,
+            title: title,
+            completed: completed is bool ? completed : false,
+            createdAt: createdAt,
+          );
+        })
+        .whereType<TodoNoteEntry>()
+        .toList();
+  } catch (_) {
+    return <TodoNoteEntry>[];
+  }
+}
+
+List<ExpenseEntry> _decodeExpenses(String? payload) {
+  if (payload == null || payload.trim().isEmpty) {
+    return <ExpenseEntry>[];
+  }
+
+  try {
+    final decoded = jsonDecode(payload);
+    if (decoded is! List) {
+      return <ExpenseEntry>[];
+    }
+
+    return decoded
+        .whereType<Map>()
+        .map((item) {
+          final id = item['id'];
+          final title = item['title'];
+          final amountValue = item['amount'];
+          final dateValue = item['date'];
+
+          if (id is! String || title is! String || dateValue is! String) {
+            return null;
+          }
+
+          final parsedAmount = amountValue is num
+              ? amountValue.toDouble()
+              : double.tryParse(amountValue?.toString() ?? '');
+          final parsedDate = DateTime.tryParse(dateValue);
+          if (parsedAmount == null || parsedDate == null) {
+            return null;
+          }
+
+          return ExpenseEntry(
+            id: id,
+            title: title,
+            amount: parsedAmount,
+            date: parsedDate,
+          );
+        })
+        .whereType<ExpenseEntry>()
+        .toList();
+  } catch (_) {
+    return <ExpenseEntry>[];
+  }
+}
+
 List<GoalEntry> _removeFirstMatchingGoal(
   List<GoalEntry> goals,
   GoalEntry target,
@@ -1502,6 +2292,40 @@ bool _goalsEqual(List<GoalEntry> a, List<GoalEntry> b) {
 
   for (var i = 0; i < a.length; i++) {
     if (a[i].name != b[i].name ||
+        _dateOnly(a[i].date) != _dateOnly(b[i].date)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool _todoNotesEqual(List<TodoNoteEntry> a, List<TodoNoteEntry> b) {
+  if (a.length != b.length) {
+    return false;
+  }
+
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].id != b[i].id ||
+        a[i].title != b[i].title ||
+        a[i].completed != b[i].completed ||
+        _dateOnly(a[i].createdAt) != _dateOnly(b[i].createdAt)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool _expensesEqual(List<ExpenseEntry> a, List<ExpenseEntry> b) {
+  if (a.length != b.length) {
+    return false;
+  }
+
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].id != b[i].id ||
+        a[i].title != b[i].title ||
+        a[i].amount != b[i].amount ||
         _dateOnly(a[i].date) != _dateOnly(b[i].date)) {
       return false;
     }
