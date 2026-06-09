@@ -1456,44 +1456,14 @@ class _TodoNotesPageState extends State<TodoNotesPage> {
   }
 
   Future<void> _openAddNoteDialog() async {
-    final titleController = TextEditingController();
-
-    final shouldAdd = await showDialog<bool>(
+    final title = await showDialog<String>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('New todo note'),
-          content: TextField(
-            controller: titleController,
-            autofocus: true,
-            decoration: const InputDecoration(
-              labelText: 'Note title',
-              border: OutlineInputBorder(),
-            ),
-            onSubmitted: (_) => Navigator.of(dialogContext).pop(true),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Add'),
-            ),
-          ],
-        );
+      builder: (_) {
+        return const _AddTodoNoteDialog();
       },
     );
 
-    if (shouldAdd != true) {
-      titleController.dispose();
-      return;
-    }
-
-    final title = titleController.text.trim();
-    titleController.dispose();
-    if (title.isEmpty) {
+    if (!mounted || title == null || title.trim().isEmpty) {
       return;
     }
 
@@ -1501,7 +1471,7 @@ class _TodoNotesPageState extends State<TodoNotesPage> {
       ..._draftNotes,
       TodoNoteEntry(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
-        title: title,
+        title: title.trim(),
         completed: false,
         createdAt: widget.today,
       ),
@@ -1628,93 +1598,18 @@ class _MoneyExpensesPageState extends State<MoneyExpensesPage> {
   }
 
   Future<void> _openAddExpenseDialog() async {
-    final titleController = TextEditingController();
-    final amountController = TextEditingController();
-    DateTime selectedDate = _dateOnly(widget.today);
-
-    final shouldAdd = await showDialog<bool>(
+    final expenseDraft = await showDialog<_ExpenseDraft>(
       context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('New expense'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: titleController,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Expense title',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: amountController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: 'Amount',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Date'),
-                      subtitle: Text(_formatDate(selectedDate)),
-                      trailing: TextButton(
-                        onPressed: () async {
-                          final pickedDate = await showDatePicker(
-                            context: dialogContext,
-                            initialDate: selectedDate,
-                            firstDate: DateTime(2000),
-                            lastDate: DateTime(2100),
-                          );
-
-                          if (pickedDate != null) {
-                            setDialogState(() {
-                              selectedDate = _dateOnly(pickedDate);
-                            });
-                          }
-                        },
-                        child: const Text('Pick date'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: const Text('Add'),
-                ),
-              ],
-            );
-          },
-        );
+      builder: (_) {
+        return _AddExpenseDialog(initialDate: _dateOnly(widget.today));
       },
     );
 
-    if (shouldAdd != true) {
-      titleController.dispose();
-      amountController.dispose();
+    if (!mounted || expenseDraft == null) {
       return;
     }
 
-    final title = titleController.text.trim();
-    final amount = double.tryParse(amountController.text.trim());
-    titleController.dispose();
-    amountController.dispose();
-    if (title.isEmpty || amount == null) {
+    if (expenseDraft.title.trim().isEmpty || expenseDraft.amount <= 0) {
       return;
     }
 
@@ -1722,9 +1617,9 @@ class _MoneyExpensesPageState extends State<MoneyExpensesPage> {
       ..._draftExpenses,
       ExpenseEntry(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
-        title: title,
-        amount: amount,
-        date: selectedDate,
+        title: expenseDraft.title.trim(),
+        amount: expenseDraft.amount,
+        date: _dateOnly(expenseDraft.date),
       ),
     ];
 
@@ -1803,6 +1698,177 @@ class _MoneyExpensesPageState extends State<MoneyExpensesPage> {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _ExpenseDraft {
+  const _ExpenseDraft({
+    required this.title,
+    required this.amount,
+    required this.date,
+  });
+
+  final String title;
+  final double amount;
+  final DateTime date;
+}
+
+class _AddTodoNoteDialog extends StatefulWidget {
+  const _AddTodoNoteDialog();
+
+  @override
+  State<_AddTodoNoteDialog> createState() => _AddTodoNoteDialogState();
+}
+
+class _AddTodoNoteDialogState extends State<_AddTodoNoteDialog> {
+  late final TextEditingController _titleController;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New todo note'),
+      content: TextField(
+        controller: _titleController,
+        autofocus: true,
+        decoration: const InputDecoration(
+          labelText: 'Note title',
+          border: OutlineInputBorder(),
+        ),
+        onSubmitted: (_) =>
+            Navigator.pop(context, _titleController.text.trim()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _titleController.text.trim()),
+          child: const Text('Add'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AddExpenseDialog extends StatefulWidget {
+  const _AddExpenseDialog({required this.initialDate});
+
+  final DateTime initialDate;
+
+  @override
+  State<_AddExpenseDialog> createState() => _AddExpenseDialogState();
+}
+
+class _AddExpenseDialogState extends State<_AddExpenseDialog> {
+  late final TextEditingController _titleController;
+  late final TextEditingController _amountController;
+  late DateTime _selectedDate;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController();
+    _amountController = TextEditingController();
+    _selectedDate = _dateOnly(widget.initialDate);
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New expense'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _titleController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Expense title',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Amount',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Date'),
+              subtitle: Text(_formatDate(_selectedDate)),
+              trailing: TextButton(
+                onPressed: () async {
+                  final pickedDate = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedDate,
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime(2100),
+                  );
+
+                  if (!mounted || pickedDate == null) {
+                    return;
+                  }
+
+                  setState(() {
+                    _selectedDate = _dateOnly(pickedDate);
+                  });
+                },
+                child: const Text('Pick date'),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final title = _titleController.text.trim();
+            final amount = double.tryParse(_amountController.text.trim());
+            if (title.isEmpty || amount == null || amount <= 0) {
+              return;
+            }
+
+            Navigator.pop(
+              context,
+              _ExpenseDraft(title: title, amount: amount, date: _selectedDate),
+            );
+          },
+          child: const Text('Add'),
+        ),
+      ],
     );
   }
 }
