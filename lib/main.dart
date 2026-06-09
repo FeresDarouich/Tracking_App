@@ -1486,6 +1486,9 @@ class _TodoNotesPageState extends State<TodoNotesPage> {
   @override
   Widget build(BuildContext context) {
     final completedCount = _draftNotes.where((note) => note.completed).length;
+    final pendingCount = _draftNotes.length - completedCount;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -1503,11 +1506,59 @@ class _TodoNotesPageState extends State<TodoNotesPage> {
         padding: const EdgeInsets.all(24),
         children: [
           Card(
+            clipBehavior: Clip.antiAlias,
+            elevation: 0,
             child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Text(
-                'Completed: $completedCount • ${_draftNotes.length} note${_draftNotes.length == 1 ? '' : 's'}',
-                style: Theme.of(context).textTheme.bodyMedium,
+              padding: EdgeInsets.zero,
+              child: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      colorScheme.primary.withValues(alpha: 0.22),
+                      colorScheme.secondary.withValues(alpha: 0.12),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.sticky_note_2_outlined),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Notes overview',
+                          style: theme.textTheme.titleMedium,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _InfoChip(
+                          icon: Icons.notes_outlined,
+                          label: 'Total',
+                          value: '${_draftNotes.length}',
+                        ),
+                        _InfoChip(
+                          icon: Icons.radio_button_unchecked,
+                          label: 'Pending',
+                          value: '$pendingCount',
+                        ),
+                        _InfoChip(
+                          icon: Icons.check_circle_outline,
+                          label: 'Completed',
+                          value: '$completedCount',
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1515,11 +1566,35 @@ class _TodoNotesPageState extends State<TodoNotesPage> {
           if (_draftNotes.isNotEmpty)
             ..._draftNotes.map(
               (note) => Card(
+                elevation: 0,
+                color: note.completed
+                    ? colorScheme.primary.withValues(alpha: 0.12)
+                    : theme.cardColor,
                 child: CheckboxListTile(
+                  controlAffinity: ListTileControlAffinity.leading,
                   value: note.completed,
-                  title: Text(note.title),
-                  subtitle: Text('Added ${_formatDate(note.createdAt)}'),
+                  title: Text(
+                    note.title,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      decoration: note.completed
+                          ? TextDecoration.lineThrough
+                          : TextDecoration.none,
+                      color: note.completed
+                          ? theme.textTheme.bodyMedium?.color?.withValues(
+                              alpha: 0.7,
+                            )
+                          : null,
+                    ),
+                  ),
+                  subtitle: Row(
+                    children: [
+                      const Icon(Icons.schedule, size: 14),
+                      const SizedBox(width: 6),
+                      Text('Added ${_formatDate(note.createdAt)}'),
+                    ],
+                  ),
                   secondary: IconButton(
+                    tooltip: 'Delete note',
                     icon: const Icon(Icons.delete_outline),
                     onPressed: () {
                       final updatedNotes = _draftNotes
@@ -1549,11 +1624,28 @@ class _TodoNotesPageState extends State<TodoNotesPage> {
             )
           else
             Card(
+              elevation: 0,
               child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Text(
-                  'No todo notes yet.',
-                  style: Theme.of(context).textTheme.bodyMedium,
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.checklist_rtl,
+                      size: 42,
+                      color: colorScheme.primary.withValues(alpha: 0.85),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'No todo notes yet.',
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Tap the + button to add your first note.',
+                      style: theme.textTheme.bodyMedium,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1631,10 +1723,15 @@ class _MoneyExpensesPageState extends State<MoneyExpensesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final totalSpent = _draftExpenses.fold<double>(
       0,
       (sum, expense) => sum + expense.amount,
     );
+    final averageSpent = _draftExpenses.isEmpty
+        ? 0.0
+        : totalSpent / _draftExpenses.length;
 
     return Scaffold(
       appBar: AppBar(
@@ -1652,11 +1749,59 @@ class _MoneyExpensesPageState extends State<MoneyExpensesPage> {
         padding: const EdgeInsets.all(24),
         children: [
           Card(
+            clipBehavior: Clip.antiAlias,
+            elevation: 0,
             child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Text(
-                'Total: ${totalSpent.toStringAsFixed(2)} • ${_draftExpenses.length} expense${_draftExpenses.length == 1 ? '' : 's'}',
-                style: Theme.of(context).textTheme.bodyMedium,
+              padding: EdgeInsets.zero,
+              child: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFF00C7BE).withValues(alpha: 0.24),
+                      const Color(0xFF2C2C2E).withValues(alpha: 0.24),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.account_balance_wallet_outlined),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Spending snapshot',
+                          style: theme.textTheme.titleMedium,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _InfoChip(
+                          icon: Icons.payments_outlined,
+                          label: 'Total',
+                          value: totalSpent.toStringAsFixed(2),
+                        ),
+                        _InfoChip(
+                          icon: Icons.receipt_long_outlined,
+                          label: 'Entries',
+                          value: '${_draftExpenses.length}',
+                        ),
+                        _InfoChip(
+                          icon: Icons.trending_up,
+                          label: 'Average',
+                          value: averageSpent.toStringAsFixed(2),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1664,35 +1809,73 @@ class _MoneyExpensesPageState extends State<MoneyExpensesPage> {
           if (_draftExpenses.isNotEmpty)
             ..._draftExpenses.map(
               (expense) => Card(
+                elevation: 0,
                 child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: colorScheme.secondary.withValues(
+                      alpha: 0.2,
+                    ),
+                    child: const Icon(Icons.attach_money, size: 18),
+                  ),
                   title: Text(expense.title),
                   subtitle: Text(
                     '${_formatDate(expense.date)} • ${expense.amount.toStringAsFixed(2)}',
                   ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () {
-                      final updatedExpenses = _draftExpenses
-                          .where((item) => item.id != expense.id)
-                          .toList();
-                      setState(() {
-                        _draftExpenses = updatedExpenses;
-                      });
-                      widget.onExpensesChanged(
-                        _sanitizeExpenses(updatedExpenses),
-                      );
-                    },
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        expense.amount.toStringAsFixed(2),
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: colorScheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Delete expense',
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () {
+                          final updatedExpenses = _draftExpenses
+                              .where((item) => item.id != expense.id)
+                              .toList();
+                          setState(() {
+                            _draftExpenses = updatedExpenses;
+                          });
+                          widget.onExpensesChanged(
+                            _sanitizeExpenses(updatedExpenses),
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ),
               ),
             )
           else
             Card(
+              elevation: 0,
               child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Text(
-                  'No expenses tracked yet.',
-                  style: Theme.of(context).textTheme.bodyMedium,
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.savings_outlined,
+                      size: 42,
+                      color: colorScheme.secondary.withValues(alpha: 0.9),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'No expenses tracked yet.',
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Tap the + button to log your first expense.',
+                      style: theme.textTheme.bodyMedium,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1738,6 +1921,8 @@ class _AddTodoNoteDialogState extends State<_AddTodoNoteDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return AlertDialog(
       title: const Text('New todo note'),
       content: TextField(
@@ -1756,6 +1941,10 @@ class _AddTodoNoteDialogState extends State<_AddTodoNoteDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: colorScheme.primary,
+            foregroundColor: colorScheme.onPrimary,
+          ),
           onPressed: () => Navigator.pop(context, _titleController.text.trim()),
           child: const Text('Add'),
         ),
@@ -1795,6 +1984,8 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return AlertDialog(
       title: const Text('New expense'),
       content: SingleChildScrollView(
@@ -1854,6 +2045,10 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: colorScheme.primary,
+            foregroundColor: colorScheme.onPrimary,
+          ),
           onPressed: () {
             final title = _titleController.text.trim();
             final amount = double.tryParse(_amountController.text.trim());
@@ -1869,6 +2064,49 @@ class _AddExpenseDialogState extends State<_AddExpenseDialog> {
           child: const Text('Add'),
         ),
       ],
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  const _InfoChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16),
+          const SizedBox(width: 8),
+          Text(
+            '$label: ',
+            style: theme.textTheme.bodySmall?.copyWith(color: Colors.white70),
+          ),
+          Text(
+            value,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
